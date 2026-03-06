@@ -1,5 +1,4 @@
 import java.io.IOException;
-import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
@@ -11,44 +10,60 @@ public class SpertaClient {
     System.out.println("cliente: main");
 
     SpertaClient client = new SpertaClient();
-    client.port = Integer.parseInt(args[0]);
+    client.port = Integer.parseInt("23456");
 
     client.startClient();
   }
 
   public void startClient(){
     try(Socket cliSoc = new Socket("localhost", port);
-        ObjectInput serverInfo = new ObjectInputStream(cliSoc.getInputStream());
         ObjectOutputStream clientInfo = new ObjectOutputStream(cliSoc.getOutputStream());
+        ObjectInputStream serverInfo = new ObjectInputStream(cliSoc.getInputStream());
         Scanner user_input = new Scanner(System.in)) {
-
+      clientInfo.writeObject("admin");
 			while(true) {
 
+        System.out.println("""
+                            Commands Available: CREATE <hm>: Create house in server
+                                                ADD <user1> <hm> <s>: Add <user1> to house <hm>, section <s>
+                                                RD <hm> <s>: Register device in <hm>, section <s>
+                                                EC <hm> <d> <int>: Send <int> to manage device <d> in house <hm>
+                                                RT <hm>: Obtain last commands of state saved in server related to <hm> 
+                                                RH <hm> <d>: Obtain history of device <d> in house <hm>""");
+        System.out.print("Enter command: ");
 				String user_Command = user_input.next();
+        String [] command_Args = user_Command.split(" ");
 
 				switch (user_Command) {
 					case "CREATE" -> {
-                                
+            
           }
 					case "ADD" -> {
-                                
+            
           }
 					case "RD" -> {
-                                
+            clientInfo.writeObject(command_Args);
+            String server_Response = (String) serverInfo.readObject();
+            switch (server_Response) {
+                case "OK"-> System.out.println("OK");
+                case "NOPERM" -> System.out.println("NOPERM # no permissions");
+                case "NOHM" -> System.out.println("NOHM # no such house");
+                default -> throw new AssertionError();
+            }
           }
 					case "EC" -> {
-                                
+            
           }
 					case "RT" -> {
-                                
+            
           }
 					case "RH" -> {
-                                
+            
           }
 					default -> {
             clientInfo.writeObject(user_Command);
             String server_Response = (String) serverInfo.readObject();
-            System.out.println(server_Response + "Commands Available: CREATE, ADD, RD, EC, RT, RH");
+            System.out.println("\n" + server_Response + ": Command not recognized by server \n");
           }
 				}
 			}
