@@ -2,31 +2,57 @@
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileWriter;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.List;
 import java.util.Scanner;
 
 public class SpertaServer {
 	public static void main(String[] args) {
 		System.out.println("servidor: main");
 		SpertaServer server = new SpertaServer();
-		server.startServer();
+		if(args.length == 1) {
+			server.startServer(Integer.parseInt(args[0]));
+		} else if (args.length == 0) {
+			server.startServer(22345);
+		}else {
+			System.out.println("Usage: java SpertaServer <port>");
+			System.exit(-1);
+		}
 	}
 
-	public void startServer (){
-		try(ServerSocket sSoc = new ServerSocket(23456)) {
-			
+	public void startServer (int port){
+		ServerSocket sSoc = null;
+    
+		try {
+			sSoc = new ServerSocket(port);
+		} catch (IOException e) {
+			System.err.println(e.getMessage());
+			System.exit(-1);
+		}
+
+		System.out.println("[SERVER] Server started on port " + port);
+
 		while(true) {
 			try {
+        File users = new File("usersLog.txt");
+        if (!users.exists()) {
+            users.createNewFile();
+        }
+        File workspaces = new File("workspaces.txt");
+        if (!workspaces.exists()) {
+            workspaces.createNewFile();
+        }
+
 				Socket inSoc = sSoc.accept();
-				ServerThread newServerThread = new ServerThread(inSoc);
+				ServerThread newServerThread = new ServerThread(inSoc, users, workspaces);
 				newServerThread.start();
 			}
 			catch (IOException e) {
@@ -43,122 +69,83 @@ public class SpertaServer {
 
 class ServerThread extends Thread {
 
-	private Socket socket = null;
+  private Socket socket = null;
+  private boolean running = true;
+  private File users, workspaces;
 
-	ServerThread(Socket inSoc) {
-		socket = inSoc;
-		System.out.println("thread do server para cada cliente");
-	}
-	@Override
-	public void run() {
-		try(ObjectInput clientInfo = new ObjectInputStream(socket.getInputStream()); ObjectOutputStream serverInfo = new ObjectOutputStream(socket.getOutputStream())) {
-			String user, password;
-			user = "Fred";
-			while(true) {
-				String [] command_Args = (String []) clientInfo.readObject();
-				switch (command_Args[0]) {
-					case "CREATE" -> {
-                                }
-					case "ADD" -> {
-                                }
-					case "RD" -> {
-						int result = verify(command_Args, user);
-						switch (result) {
-							case 0 -> serverInfo.writeObject("NOPERM");
-							case 1 -> serverInfo.writeObject("OK");
-							case -1 -> serverInfo.writeObject("NOHM");
-							default -> throw new AssertionError();
-						}
-						serverInfo.flush();
-                    }
-					case "EC" -> {
-                                }
-					case "RT" -> {
-						Number result = getHistory(command_Args[1], user);
-						if(result instanceof Long) {
-							String [] response_To_Client = {"Ok", Long.toString((long) result)};
-							serverInfo.writeObject(response_To_Client);
-							try(FileInputStream history_To_Send = new FileInputStream("history_to_send.txt")){
-								int bytesToRead;
-								byte [] buf = new byte[1024];
-								while((bytesToRead = history_To_Send.read(buf, 0, buf.length))!= -1){
-									serverInfo.write(buf, 0, bytesToRead);
-									serverInfo.flush();
-								}
-							}
-						}
-						else if(result instanceof Integer) {
-							switch ((int) result) {
-								case 0 -> serverInfo.writeObject("NODATA");
-								case 1 -> serverInfo.writeObject("NOPERM");
-								case -1 -> serverInfo.writeObject("NOHM");
-								default -> throw new AssertionError();
-							}
-        				}
-					}
-					case "RH" -> {
-                                }
-					default -> serverInfo.writeObject("NOCOMMAND");
-				}
-			}
-		} catch (IOException | ClassNotFoundException e) {
-			System.out.println("Client disconnected");
+  ObjectInputStream in;
+  ObjectOutputStream out;
+
+  ServerThread(Socket inSoc, File users, File workspaces) {
+    socket = inSoc;
+    this.users = users;
+    this.workspaces = workspaces;
+    System.out.println("thread do server para cada cliente");
+  }
+
+  public void run() {
+	try {
+		in = new ObjectInputStream(socket.getInputStream());
+		out = new ObjectOutputStream(socket.getOutputStream());
+		String user, pwd;
+
+		try {
+			user = (String) in.readObject();
+			pwd = (String) in.readObject();
+			System.out.println("[* Thread] Authentication request received for user: " + user);
+
+      try {
+        authenticate(users, user, pwd, in, out);
+        while(running){
+          //implementação dos comandos
+        }
+      } catch (Exception e) {
+      }
+		} catch (ClassNotFoundException e1) {
+      e1.printStackTrace();
 		}
-	}
-	private static int verify(String[] commands, String user) {
-		try(Scanner sc = new Scanner(new File("workspaces.txt"))) {
-			List<String> lines = Files.readAllLines(Paths.get("workspaces.txt"));
-			int counter_lines = 0;
-			while (sc.hasNextLine()) {
-				String line = sc.nextLine();
-				String[] lineArgs = line.split(":");
-				if (lineArgs[0].equals(commands[1]) && lineArgs[1].equals(user)) {
-					lines.set(counter_lines, commands[0] + ":" + commands[1] + "," + commands[2]);
-					Files.write(Paths.get("history.txt"), lines);
-					return 1;
-				}
-				else if (lineArgs[0].equals(commands[1]) && !lineArgs[1].equals(user)) {
-					return 0;
-				}
-				counter_lines++;
-			}
-		} catch (Exception e) {
-			System.err.println(e.getMessage());
-			System.exit(-1);
-		}
-		return -1;
-	}
-    private static Number getHistory(String house, String user) {
-		File house_Dir = new File(house);
-		if(!house_Dir.exists()) return (int) -1; //NOHM
-        try(Scanner sc = new Scanner(new File("users.txt"))) {
-			while(sc.hasNextLine()){
-				String [] line = sc.nextLine().split(":");
-				if(line[0].equals(house)) {
-					for (int idx = 1; idx < line.length; idx++) {
-						if(line[idx].equals(user)) {
-							File history = new File(house + "/history.txt");
-							if(history.length() == 0) return (int) 0; //NODATA
-							File history_to_send = new File("history_to_send.txt");
-							try(Scanner sc1 = new Scanner(history); FileWriter file_To_Send = new FileWriter(history_to_send)) {
-								while(sc1.hasNextLine()){
-									String [] line1 = sc1.nextLine().split(":");
-									file_To_Send.write("Last Operation of " + line1[0] + ": " + line1[line1.length - 1] + "\n");
-								}
-								return (long) history_to_send.length(); //OK
-							} catch (IOException e) {
-								System.err.println(e.getMessage());
-								System.exit(-1);
-							}
-						}
-					}
-					return (int) 1; //NOPERM
-				}
-			}
-		} catch (IOException e) {
-			System.err.println(e.getMessage());
-			System.exit(-1);
-		}
-		return (int) 2;
+	} catch (IOException ex) {
+    ex.printStackTrace();
+  }
+  }
+
+    private void authenticate(File usersFile, String user, String pwd, ObjectInputStream in, ObjectOutputStream out) {
+      boolean isAuthed = false;
+
+      try(Scanner sc = new Scanner(usersFile)) {
+        while (sc.hasNextLine()) {
+          String[] credentials = sc.nextLine().split(":");
+          if (credentials[0].equals(user)) {
+            while(!isAuthed){
+              if (credentials[1].equals(pwd)) {
+                isAuthed = true;
+                out.writeObject("OK_USER");
+                out.flush();
+                System.out.println("[Thread] Authentication successful for user: " + user);
+              } else {
+                out.writeObject("WRONG_PWD");
+                out.flush();
+                pwd = (String) in.readObject();
+              }
+            }
+          }
+        }
+        createUser(user, pwd, usersFile);
+        out.writeObject("OK_NEW_USER");
+        out.flush();
+      }catch (IOException | ClassNotFoundException e) {
+        e.printStackTrace();
+      }
+    }
+
+    private void createUser(String user, String pwd, File usersFile) {
+      String newUser = user + ":" + pwd;
+      try {
+        FileWriter fw = new FileWriter(usersFile);
+        fw.write(newUser + System.lineSeparator());
+        fw.close();
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
     }
 }
