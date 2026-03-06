@@ -1,13 +1,6 @@
-
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
@@ -29,38 +22,27 @@ public class SpertaServer {
 	}
 
 	public void startServer (int port){
-		ServerSocket sSoc = null;
-    
-		try {
-			sSoc = new ServerSocket(port);
+		try(ServerSocket sSoc = new ServerSocket(port)) {
+			System.out.println("[SERVER] Server started on port " + port);
+			while(true) {
+				try {
+					File users = new File("usersLog.txt");
+					if (!users.exists()) {
+						users.createNewFile();
+					}
+					File workspaces = new File("workspaces.txt");
+					if (!workspaces.exists()) {
+						workspaces.createNewFile();
+					}
+					Socket inSoc = sSoc.accept();
+					ServerThread newServerThread = new ServerThread(inSoc, users, workspaces);
+					newServerThread.start();
+				} catch (IOException e) {
+					System.err.println(e.getMessage());
+					System.exit(-1);
+				}
+			}
 		} catch (IOException e) {
-			System.err.println(e.getMessage());
-			System.exit(-1);
-		}
-
-		System.out.println("[SERVER] Server started on port " + port);
-
-		while(true) {
-			try {
-        File users = new File("usersLog.txt");
-        if (!users.exists()) {
-            users.createNewFile();
-        }
-        File workspaces = new File("workspaces.txt");
-        if (!workspaces.exists()) {
-            workspaces.createNewFile();
-        }
-
-				Socket inSoc = sSoc.accept();
-				ServerThread newServerThread = new ServerThread(inSoc, users, workspaces);
-				newServerThread.start();
-			}
-			catch (IOException e) {
-				System.err.println(e.getMessage());
-				System.exit(-1);
-			}
-		}
-	} catch (IOException e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
@@ -83,31 +65,47 @@ class ServerThread extends Thread {
     System.out.println("thread do server para cada cliente");
   }
 
-  public void run() {
-	try {
-		in = new ObjectInputStream(socket.getInputStream());
-		out = new ObjectOutputStream(socket.getOutputStream());
-		String user, pwd;
-
-		try {
-			user = (String) in.readObject();
-			pwd = (String) in.readObject();
-			System.out.println("[* Thread] Authentication request received for user: " + user);
-
-      try {
-        authenticate(users, user, pwd, in, out);
-        while(running){
-          //implementação dos comandos
-        }
-      } catch (Exception e) {
-      }
-		} catch (ClassNotFoundException e1) {
-      e1.printStackTrace();
+	@Override
+	public void run() {
+		try(ObjectInputStream clientInfo = new ObjectInputStream(socket.getInputStream());
+			ObjectOutputStream serverInfo = new ObjectOutputStream(socket.getOutputStream())) {
+			String user, pwd;
+			try {
+				user = (String) in.readObject();
+				pwd = (String) in.readObject();
+				System.out.println("[* Thread] Authentication request received for user: " + user);
+				try {
+					authenticate(users, user, pwd, in, out);
+					while(running){
+						String client_Command = (String) clientInfo.readObject();
+						switch (client_Command) {
+							case "CREATE" -> {
+										}
+							case "ADD" -> {
+										}
+							case "RD" -> {
+										}
+							case "EC" -> {
+										}
+							case "RT" -> {
+										}
+							case "RH" -> {
+										}
+							default -> serverInfo.writeObject("NOCOMMAND");
+						}
+					}
+				} catch (IOException | ClassNotFoundException e) {
+					System.err.println(e.getMessage());
+					System.exit(-1);
+				}
+			} catch (ClassNotFoundException e1) {
+				System.err.println(e1.getMessage());
+				System.exit(-1);
+			}
+		} catch (IOException ex) {
+			System.out.println("Client disconnected!");
 		}
-	} catch (IOException ex) {
-    ex.printStackTrace();
-  }
-  }
+	}
 
     private void authenticate(File usersFile, String user, String pwd, ObjectInputStream in, ObjectOutputStream out) {
       boolean isAuthed = false;
