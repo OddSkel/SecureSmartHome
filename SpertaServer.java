@@ -1,4 +1,3 @@
-
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -25,25 +24,25 @@ public class SpertaServer {
 	public void startServer (int port){
 		try(ServerSocket sSoc = new ServerSocket(port)) {
 			System.out.println("[SERVER] Server started on port " + port);
-		while(true) {
-			try {
-				File users = new File("usersLog.txt");
-				if (!users.exists()) {
-					users.createNewFile();
+			while(true) {
+				try {
+					File users = new File("usersLog.txt");
+					if (!users.exists()) {
+						users.createNewFile();
+					}
+					File workspaces = new File("workspaces.txt");
+					if (!workspaces.exists()) {
+						workspaces.createNewFile();
+					}
+					Socket inSoc = sSoc.accept();
+					ServerThread newServerThread = new ServerThread(inSoc, users, workspaces);
+					newServerThread.start();
+				} catch (IOException e) {
+					System.err.println(e.getMessage());
+					System.exit(-1);
 				}
-				File workspaces = new File("workspaces.txt");
-				if (!workspaces.exists()) {
-					workspaces.createNewFile();
-				}
-				Socket inSoc = sSoc.accept();
-				ServerThread newServerThread = new ServerThread(inSoc, users, workspaces);
-				newServerThread.start();
-			} catch (IOException e) {
-				System.err.println(e.getMessage());
-				System.exit(-1);
 			}
-		}
-	} catch (IOException e) {
+		} catch (IOException e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
@@ -68,7 +67,8 @@ class ServerThread extends Thread {
 
 	@Override
 	public void run() {
-		try(ObjectInputStream clientInfo = new ObjectInputStream(socket.getInputStream()); ObjectOutputStream serverInfo = new ObjectOutputStream(socket.getOutputStream())) {
+		try(ObjectInputStream clientInfo = new ObjectInputStream(socket.getInputStream());
+			ObjectOutputStream serverInfo = new ObjectOutputStream(socket.getOutputStream())) {
 			String user, pwd;
 			try {
 				user = (String) in.readObject();
@@ -103,8 +103,7 @@ class ServerThread extends Thread {
 				System.exit(-1);
 			}
 		} catch (IOException ex) {
-			System.err.println(ex.getMessage());
-			System.exit(-1);
+			System.out.println("Client disconnected!");
 		}
 	}
 
