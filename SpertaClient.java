@@ -20,7 +20,6 @@ public class SpertaClient {
         ObjectOutputStream clientInfo = new ObjectOutputStream(cliSoc.getOutputStream());
         ObjectInputStream serverInfo = new ObjectInputStream(cliSoc.getInputStream());
         Scanner user_input = new Scanner(System.in)) {
-      clientInfo.writeObject("admin");
 			while(true) {
 
         System.out.println("""
@@ -31,10 +30,10 @@ public class SpertaClient {
                                                 RT <hm>: Obtain last commands of state saved in server related to <hm> 
                                                 RH <hm> <d>: Obtain history of device <d> in house <hm>""");
         System.out.print("Enter command: ");
-				String user_Command = user_input.next();
+				String user_Command = user_input.nextLine().trim();
         String [] command_Args = user_Command.split(" ");
 
-				switch (user_Command) {
+				switch (command_Args[0]) {
 					case "CREATE" -> {
             
           }
@@ -43,6 +42,7 @@ public class SpertaClient {
           }
 					case "RD" -> {
             clientInfo.writeObject(command_Args);
+            clientInfo.flush();
             String server_Response = (String) serverInfo.readObject();
             switch (server_Response) {
                 case "OK"-> System.out.println("OK");

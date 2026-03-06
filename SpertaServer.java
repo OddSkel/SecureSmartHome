@@ -68,6 +68,7 @@ class ServerThread extends Thread {
 							case -1 -> serverInfo.writeObject("NOHM");
 							default -> throw new AssertionError();
 						}
+						serverInfo.flush();
                     }
 					case "EC" -> {
                                 }
