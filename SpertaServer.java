@@ -9,7 +9,7 @@ import java.util.Scanner;
 
 public class SpertaServer {
 	public static void main(String[] args) {
-		System.out.println("servidor: main");
+    System.out.println("[SERVER] Starting server...");
 		SpertaServer server = new SpertaServer();
 		if(args.length == 1) {
 			server.startServer(Integer.parseInt(args[0]));
@@ -26,16 +26,8 @@ public class SpertaServer {
 			System.out.println("[SERVER] Server started on port " + port);
 			while(true) {
 				try {
-					File users = new File("usersLog.txt");
-					if (!users.exists()) {
-						users.createNewFile();
-					}
-					File workspaces = new File("workspaces.txt");
-					if (!workspaces.exists()) {
-						workspaces.createNewFile();
-					}
 					Socket inSoc = sSoc.accept();
-					ServerThread newServerThread = new ServerThread(inSoc, users, workspaces);
+					ServerThread newServerThread = new ServerThread(inSoc);
 					newServerThread.start();
 				} catch (IOException e) {
 					System.err.println(e.getMessage());
@@ -58,46 +50,48 @@ class ServerThread extends Thread {
   ObjectInputStream in;
   ObjectOutputStream out;
 
-  ServerThread(Socket inSoc, File users, File workspaces) {
-    socket = inSoc;
-    this.users = users;
-    this.workspaces = workspaces;
-    System.out.println("thread do server para cada cliente");
-  }
+	ServerThread(Socket inSoc) {
+		socket = inSoc;
+		System.out.println("thread do server para cada cliente");
+	}
 
-	@Override
 	public void run() {
-		try(ObjectInputStream clientInfo = new ObjectInputStream(socket.getInputStream());
-			ObjectOutputStream serverInfo = new ObjectOutputStream(socket.getOutputStream())) {
-			String user, pwd;
-			try {
+		try{
+			out = new ObjectOutputStream(socket.getOutputStream());
+      in = new ObjectInputStream(socket.getInputStream());
+      String user, pwd;
+			users = new File("usersLog.txt");
+      if (!users.exists()) {
+        users.createNewFile();
+      }
+      workspaces = new File("workspaces.txt");
+      if (!workspaces.exists()) {
+        workspaces.createNewFile();
+      }
+
+      try {
 				user = (String) in.readObject();
 				pwd = (String) in.readObject();
-				System.out.println("[* Thread] Authentication request received for user: " + user);
-				try {
-					authenticate(users, user, pwd, in, out);
-					while(running){
-						String client_Command = (String) clientInfo.readObject();
-						switch (client_Command) {
-							case "CREATE" -> {
-										}
-							case "ADD" -> {
-										}
-							case "RD" -> {
-										}
-							case "EC" -> {
-										}
-							case "RT" -> {
-										}
-							case "RH" -> {
-										}
-							default -> serverInfo.writeObject("NOCOMMAND");
-						}
-					}
-				} catch (IOException | ClassNotFoundException e) {
-					System.err.println(e.getMessage());
-					System.exit(-1);
-				}
+				System.out.println("["+ user +" Thread] Authentication request received for user: " + user);
+        authenticate(user, pwd);
+        while(running){
+          String client_Command = (String) in.readObject();
+          switch (client_Command) {
+            case "CREATE" -> {
+                  }
+            case "ADD" -> {
+                  }
+            case "RD" -> {
+                  }
+            case "EC" -> {
+                  }
+            case "RT" -> {
+                  }
+            case "RH" -> {
+                  }
+            default -> out.writeObject("NOCOMMAND");
+          }
+        }
 			} catch (ClassNotFoundException e1) {
 				System.err.println(e1.getMessage());
 				System.exit(-1);
@@ -107,43 +101,45 @@ class ServerThread extends Thread {
 		}
 	}
 
-    private void authenticate(File usersFile, String user, String pwd, ObjectInputStream in, ObjectOutputStream out) {
-      boolean isAuthed = false;
-
-      try(Scanner sc = new Scanner(usersFile)) {
-        while (sc.hasNextLine()) {
-          String[] credentials = sc.nextLine().split(":");
-          if (credentials[0].equals(user)) {
-            while(!isAuthed){
-              if (credentials[1].equals(pwd)) {
-                isAuthed = true;
-                out.writeObject("OK_USER");
-                out.flush();
-                System.out.println("[Thread] Authentication successful for user: " + user);
-              } else {
-                out.writeObject("WRONG_PWD");
-                out.flush();
-                pwd = (String) in.readObject();
-              }
-            }
-          }
-        }
-        createUser(user, pwd, usersFile);
-        out.writeObject("OK_NEW_USER");
-        out.flush();
-      }catch (IOException | ClassNotFoundException e) {
-        e.printStackTrace();
-      }
+	private void authenticate(String user, String pwd) {
+		boolean isAuthed = false;
+		try(Scanner sc = new Scanner(users)) {
+			while (sc.hasNextLine()) {
+				String[] credentials = sc.nextLine().split(":");
+				if (credentials[0].equals(user)) {
+					while(!isAuthed){
+						if (credentials[1].equals(pwd)) {
+							isAuthed = true;
+							out.writeObject("OK_USER");
+							out.flush();
+							System.out.println("["+ user +" Thread] Authentication successful for user: " + user);
+              return;
+						} else {
+							out.writeObject("WRONG_PWD");
+							out.flush();
+              System.out.println("["+ user +" Thread] Authentication failed for user: " + user + ". Incorrect password.");
+							pwd = (String) in.readObject();
+						}
+					}
+				}
+			}
+			createUser(user, pwd);
+			out.writeObject("OK_NEW_USER");
+			out.flush();
+		}catch (IOException | ClassNotFoundException e) {
+			System.err.println(e.getMessage());
+			System.exit(-1);
+		}
     }
 
-    private void createUser(String user, String pwd, File usersFile) {
-      String newUser = user + ":" + pwd;
-      try {
-        FileWriter fw = new FileWriter(usersFile);
-        fw.write(newUser + System.lineSeparator());
-        fw.close();
-      } catch (IOException e) {
-        e.printStackTrace();
-      }
+    private void createUser(String user, String pwd) {
+		String newUser = user + ":" + pwd;
+		try(FileWriter fw = new FileWriter(users, true)) {
+			fw.write(newUser + System.lineSeparator());
+      System.out.println("[Thread] New user created: " + user);
+		} catch (IOException e) {
+			System.err.println(e.getMessage());
+			System.exit(-1);
+		}
     }
 }
