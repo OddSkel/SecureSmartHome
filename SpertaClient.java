@@ -13,7 +13,7 @@ public class SpertaClient {
   private static final String COMMAND_LIST =
   "Available Commands:\n" +
   "CREATE <hm>\n" +
-  "ADD <user1> <hm> <a>\n" +
+  "ADD <user> <hm> <a>\n" +
   "RD <hm> <s>\n" +
   "EC <hm> <d> <int>\n" +
   "RT <hm>\n" +
@@ -60,10 +60,20 @@ public class SpertaClient {
         if (line.isEmpty()) {
             continue; 
         }
-				String user_Command = user_input.next();
+				String[] cmd = line.split(" ");
+        String user_Command = cmd[0].toUpperCase();
 				switch (user_Command) {
 					case "CREATE" -> {
-            
+            if (cmd.length != 2) {
+              System.out.println("Usage: CREATE <home_name>");
+              continue;
+            }else {
+              outStream.writeObject(user_Command);
+              outStream.writeObject(cmd[1]);
+              outStream.flush();
+              String server_Response = (String) inStream.readObject();
+              System.out.println(server_Response);
+            }
           }
 					case "ADD" -> {
             
@@ -141,4 +151,6 @@ public class SpertaClient {
       System.err.println(e.getMessage());
     }
   }
+
+
 }
