@@ -45,10 +45,10 @@ class ServerThread extends Thread {
 	private Socket socket = null;
 
 	private boolean running = true;
-	private File users, workspaces;
-
-	ObjectInputStream in;
-	ObjectOutputStream out;
+	private File users, homes;
+  private String user, pwd;
+	private ObjectInputStream in;
+	private ObjectOutputStream out;
 
 	ServerThread(Socket inSoc) {
 		socket = inSoc;
@@ -59,14 +59,14 @@ class ServerThread extends Thread {
 		try{
 			out = new ObjectOutputStream(socket.getOutputStream());
       in = new ObjectInputStream(socket.getInputStream());
-      String user, pwd;
+      
 			users = new File("usersLog.txt");
       if (!users.exists()) {
         users.createNewFile();
       }
-      workspaces = new File("workspaces.txt");
-      if (!workspaces.exists()) {
-        workspaces.createNewFile();
+      homes = new File("homes.txt");
+      if (!homes.exists()) {
+        homes.createNewFile();
       }
 
       try {
@@ -78,17 +78,18 @@ class ServerThread extends Thread {
           String client_Command = (String) in.readObject();
           switch (client_Command) {
             case "CREATE" -> {
-                  }
+              createHome();
+            }
             case "ADD" -> {
-                  }
+            }
             case "RD" -> {
-                  }
+            }
             case "EC" -> {
-                  }
+            }
             case "RT" -> {
-                  }
+            }
             case "RH" -> {
-                  }
+            }
             default -> out.writeObject("NOCOMMAND");
           }
         }
@@ -141,5 +142,45 @@ class ServerThread extends Thread {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
+    }
+
+    private void createHome() {
+      try {
+        String homeName = (String) in.readObject();
+        if(homeExists(homeName)){
+          out.writeObject("HOME_EXISTS");
+          out.flush();
+          System.out.println("[Thread] Home creation failed. Home already exists: " + homeName);
+        } else {
+          out.writeObject("HOME_CREATED");
+          out.flush();
+          try(FileWriter fw = new FileWriter(homes, true)) {
+            fw.write(homeName +" : "+ user + System.lineSeparator());
+
+            System.out.println("[Thread] Home created: " + homeName);
+          } catch (IOException e) {
+            System.err.println(e.getMessage());
+            System.exit(-1);
+          }
+        }
+      } catch (IOException | ClassNotFoundException e) {
+        System.err.println(e.getMessage());
+        System.exit(-1);
+      }
+    }
+
+    private boolean homeExists(String homeName) {
+      try(Scanner sc = new Scanner(homes)) {
+        while (sc.hasNextLine()) {
+          String[] homeData = sc.nextLine().split(" : ");
+          if (homeData[0].equals(homeName)) {
+            return true;
+          }
+        }
+      } catch (IOException e) {
+        System.err.println(e.getMessage());
+        System.exit(-1);
+      }
+      return false;
     }
 }
