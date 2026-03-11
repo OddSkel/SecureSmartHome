@@ -6,6 +6,9 @@ import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Scanner;
+import java.io.FileWriter;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 public class SpertaServer {
 	public static void main(String[] args) {
@@ -84,6 +87,10 @@ class ServerThread extends Thread {
             case "RD" -> {
                   }
             case "EC" -> {
+				String[] parts = client_Command.split(" ");
+    			String response = processEC(parts); 
+    			out.writeObject(response);         
+    			out.flush();
                   }
             case "RT" -> {
                   }
@@ -142,4 +149,48 @@ class ServerThread extends Thread {
 			System.exit(-1);
 		}
     }
+
+	private String processEC(String[] parts){
+		if (parts.length != 4) return "NOK";
+
+    	String casa = parts[1];
+    	String dispositivo = parts[2];
+    	int valor;
+
+    	try {
+        	valor = Integer.parseInt(parts[3]);
+        	if (valor < 0 || valor > 600) return "NOK"; 
+    	} catch (NumberFormatException e) {
+        	return "NOK";
+    	}
+    	saveLog(casa, dispositivo, valor);
+    	return "OK";
+	}
+
+	private void saveLog(String casa, String dispositivo, int valor) {
+    	String fileName = casa + "_" + dispositivo + "_log.csv";
+    	File logFile = new File(fileName);
+    
+    	try (FileWriter fw = new FileWriter(logFile, true)) {
+        	String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        	fw.write(timestamp + "," + valor + System.lineSeparator());
+        
+        	updateCurrentState(casa, dispositivo, valor);
+    	} catch (IOException e) {
+        	System.err.println("Erro ao gravar log: " + e.getMessage());
+    	}
+	}
+
+	private void updateCurrentState(String casa, String dispositivo, int valor) {
+    	File statesFile = new File("current_states.txt");
+    	try (FileWriter fw = new FileWriter(statesFile, true)) {
+       		String logEntry = String.format("Casa: %s, Dispositivo: %s, Estado: %d, Data: %s%n", 
+                          casa, dispositivo, valor, LocalDateTime.now().toString());
+        	fw.write(logEntry);
+        	System.out.println("[" + this.getName() + "] Estado atualizado em current_states.txt");
+    	} catch (IOException e) {
+        	System.err.println("Erro ao atualizar estado: " + e.getMessage());
+    	}
+	}
+
 }

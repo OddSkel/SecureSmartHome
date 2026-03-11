@@ -116,7 +116,7 @@ public class SpertaClient {
   private void sendECCommand(String[] parts, String line, ObjectOutputStream out, ObjectInput in){
     try {
         if (parts.length != 4) {
-            System.out.println("Erro: Formato invalido. Uso: EC <hm> <d> <int>");
+            System.out.println("Error: Invalid Format. Uso: EC <hm> <d> <int>");
             return; 
         }
         out.writeObject(line);
@@ -125,8 +125,8 @@ public class SpertaClient {
         System.out.println(server_Response);
 
     } catch (IOException | ClassNotFoundException e) {
-        System.err.println("Erro de comunicacao no comando EC: " + e.getMessage());
+        System.err.println("Communication error with command EC: " + e.getMessage());
     }
   }
-  
+
 }
