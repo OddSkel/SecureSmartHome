@@ -73,7 +73,7 @@ public class SpertaClient {
                                 
           }
 					case "EC" -> {
-                                
+            sendECCommand(parts, line, outStream, inStream);
           }
 					case "RT" -> {
                                 
@@ -112,4 +112,21 @@ public class SpertaClient {
       System.err.println(e.getMessage());
     }
   }
+
+  private void sendECCommand(String[] parts, String line, ObjectOutputStream out, ObjectInput in){
+    try {
+        if (parts.length != 4) {
+            System.out.println("Erro: Formato invalido. Uso: EC <hm> <d> <int>");
+            return; 
+        }
+        out.writeObject(line);
+        out.flush();
+        String server_Response = (String) in.readObject();
+        System.out.println(server_Response);
+
+    } catch (IOException | ClassNotFoundException e) {
+        System.err.println("Erro de comunicacao no comando EC: " + e.getMessage());
+    }
+  }
+  
 }
