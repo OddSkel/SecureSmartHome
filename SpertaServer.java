@@ -46,7 +46,7 @@ public class SpertaServer {
 
 class ServerThread extends Thread {
 	private Socket socket = null;
-
+	private String currentUser;
 	private boolean running = true;
 	private File users, workspaces;
 
@@ -61,44 +61,45 @@ class ServerThread extends Thread {
 	public void run() {
 		try{
 			out = new ObjectOutputStream(socket.getOutputStream());
-      in = new ObjectInputStream(socket.getInputStream());
-      String user, pwd;
+      		in = new ObjectInputStream(socket.getInputStream());
+      		String user, pwd;
 			users = new File("usersLog.txt");
-      if (!users.exists()) {
-        users.createNewFile();
-      }
-      workspaces = new File("workspaces.txt");
-      if (!workspaces.exists()) {
-        workspaces.createNewFile();
-      }
+      		if (!users.exists()) {
+        		users.createNewFile();
+      		}
+      		workspaces = new File("workspaces.txt");
+      		if (!workspaces.exists()) {
+        		workspaces.createNewFile();
+      		}
 
-      try {
+      		try {
 				user = (String) in.readObject();
 				pwd = (String) in.readObject();
 				System.out.println("["+ user +" Thread] Authentication request received for user: " + user);
-        authenticate(user, pwd);
-        while(running){
-          String client_Command = (String) in.readObject();
-          switch (client_Command) {
-            case "CREATE" -> {
-                  }
-            case "ADD" -> {
-                  }
-            case "RD" -> {
-                  }
-            case "EC" -> {
-				String[] parts = client_Command.split(" ");
-    			String response = processEC(parts); 
-    			out.writeObject(response);         
-    			out.flush();
-                  }
-            case "RT" -> {
-                  }
-            case "RH" -> {
-                  }
-            default -> out.writeObject("NOCOMMAND");
-          }
-        }
+        		authenticate(user, pwd);
+				this.currentUser = user;
+        		while(running){
+          		String client_Command = (String) in.readObject();
+          		switch (client_Command) {
+            		case "CREATE" -> {
+                		}
+            		case "ADD" -> {
+                  		}
+            		case "RD" -> {
+                  		}
+            		case "EC" -> {
+						String[] parts = client_Command.split(" ");
+    					String response = processEC(parts); 
+    					out.writeObject(response);         
+    					out.flush();
+                  		}
+            		case "RT" -> {
+                  		}
+            		case "RH" -> {
+                  		}
+            		default -> out.writeObject("NOCOMMAND");
+          		}
+        		}
 			} catch (ClassNotFoundException e1) {
 				System.err.println(e1.getMessage());
 				System.exit(-1);
@@ -153,7 +154,7 @@ class ServerThread extends Thread {
 	private String processEC(String[] parts){
 		if (parts.length != 4) return "NOK";
 
-    	String casa = parts[1];
+    	String casaAlvo = parts[1];
     	String dispositivo = parts[2];
     	int valor;
 
@@ -163,7 +164,37 @@ class ServerThread extends Thread {
     	} catch (NumberFormatException e) {
         	return "NOK";
     	}
-    	saveLog(casa, dispositivo, valor);
+		boolean casaExiste = false;
+    	boolean dispositivoExiste = false;
+    	boolean temPermissao = false;
+
+    	try (Scanner fs = new Scanner(new File("workspaces.txt"))) {
+        	while (fs.hasNextLine()) {
+            	String linha = fs.nextLine();
+            	if (linha.contains("CASA:" + casaAlvo)) {
+                	casaExiste = true;
+
+                	if (linha.contains(dispositivo)) {
+                    	dispositivoExiste = true;
+                	}
+                	String seccao = dispositivo.substring(0, 1); 
+                
+                	if (linha.contains("OWNER:" + currentUser) || 
+                    	linha.contains(currentUser + ":all") || 
+                    	linha.contains(currentUser + ":" + seccao)) {
+                    	temPermissao = true;
+                	}
+            	}
+        	}
+    	} catch (IOException e) {
+        	return "NOHM"; 
+    	}
+
+    	if (!casaExiste) return "NOHM";
+    	if (!dispositivoExiste) return "NOD";
+    	if (!temPermissao) return "NOPERM";
+		
+    	saveLog(casaAlvo, dispositivo, valor);
     	return "OK";
 	}
 
