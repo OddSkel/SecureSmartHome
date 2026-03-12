@@ -84,7 +84,7 @@ public class SpertaClient {
             
           }
 					default -> {
-            clientInfo.writeObject(user_Command);
+            clientInfo.writeObject(command_Args);
             String server_Response = (String) serverInfo.readObject();
             System.out.println("\n" + server_Response + ": Command not recognized by server \n");
           }

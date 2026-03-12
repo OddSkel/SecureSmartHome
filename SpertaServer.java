@@ -53,7 +53,7 @@ class ServerThread extends Thread {
 	public void run() {
 		try(ObjectInput clientInfo = new ObjectInputStream(socket.getInputStream()); ObjectOutputStream serverInfo = new ObjectOutputStream(socket.getOutputStream())) {
 			String user, password;
-			user = "admin";
+			user = "Fred";
 			while(true) {
 				String [] command_Args = (String []) clientInfo.readObject();
 				switch (command_Args[0]) {
@@ -62,7 +62,7 @@ class ServerThread extends Thread {
 					case "ADD" -> {
                                 }
 					case "RD" -> {
-						int result = verify(command_Args[1], command_Args[2], user);
+						int result = verify(command_Args, user);
 						switch (result) {
 							case 0 -> serverInfo.writeObject("NOPERM");
 							case 1 -> serverInfo.writeObject("OK");
@@ -105,19 +105,19 @@ class ServerThread extends Thread {
 			System.out.println("Client disconnected");
 		}
 	}
-	private static int verify(String house, String section, String user) {
+	private static int verify(String[] commands, String user) {
 		try(Scanner sc = new Scanner(new File("workspaces.txt"))) {
 			List<String> lines = Files.readAllLines(Paths.get("workspaces.txt"));
 			int counter_lines = 0;
 			while (sc.hasNextLine()) {
 				String line = sc.nextLine();
 				String[] lineArgs = line.split(":");
-				if (lineArgs[0].equals(house) && lineArgs[1].equals(user)) {
-					lines.set(counter_lines, line + ":" + section);
-					Files.write(Paths.get("workspaces.txt"), lines);
+				if (lineArgs[0].equals(commands[1]) && lineArgs[1].equals(user)) {
+					lines.set(counter_lines, commands[0] + ":" + commands[1] + "," + commands[2]);
+					Files.write(Paths.get("history.txt"), lines);
 					return 1;
 				}
-				else if (lineArgs[0].equals(house) && !lineArgs[1].equals(user)) {
+				else if (lineArgs[0].equals(commands[1]) && !lineArgs[1].equals(user)) {
 					return 0;
 				}
 				counter_lines++;
@@ -130,7 +130,7 @@ class ServerThread extends Thread {
 	}
     private static Number getHistory(String house, String user) {
 		File house_Dir = new File(house);
-		if(!house_Dir.exists()) return -1; //NOHM
+		if(!house_Dir.exists()) return (int) -1; //NOHM
         try(Scanner sc = new Scanner(new File("users.txt"))) {
 			while(sc.hasNextLine()){
 				String [] line = sc.nextLine().split(":");
@@ -138,29 +138,27 @@ class ServerThread extends Thread {
 					for (int idx = 1; idx < line.length; idx++) {
 						if(line[idx].equals(user)) {
 							File history = new File(house + "/history.txt");
-							if(history.length() == 0) {
-								return 0; //NODATA
-							}
+							if(history.length() == 0) return (int) 0; //NODATA
 							File history_to_send = new File("history_to_send.txt");
 							try(Scanner sc1 = new Scanner(history); FileWriter file_To_Send = new FileWriter(history_to_send)) {
 								while(sc1.hasNextLine()){
 									String [] line1 = sc1.nextLine().split(":");
 									file_To_Send.write("Last Operation of " + line1[0] + ": " + line1[line1.length - 1] + "\n");
 								}
-								return history_to_send.length(); //OK
+								return (long) history_to_send.length(); //OK
 							} catch (IOException e) {
 								System.err.println(e.getMessage());
 								System.exit(-1);
 							}
 						}
 					}
-					return 1; //NOPERM
+					return (int) 1; //NOPERM
 				}
 			}
 		} catch (IOException e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
-		return 2;
+		return (int) 2;
     }
 }
