@@ -6,93 +6,128 @@ import java.net.Socket;
 import java.util.Scanner;
 
 public class SpertaClient {
-  private int port;
-  public static void main(String[] args) {
-    System.out.println("cliente: main");
+    private int port;
+    private String host;
+    private String user, pwd;
 
-    SpertaClient client = new SpertaClient();
-    client.port = Integer.parseInt("23456");
+    private static final String COMMAND_LIST =
+    "Available Commands:\n" +
+    "CREATE <hm>\n" +
+    "ADD <user1> <hm> <a>\n" +
+    "RD <hm> <s>\n" +
+    "EC <hm> <d> <int>\n" +
+    "RT <hm>\n" +
+    "RH <hm> <d>";
 
-    client.startClient();
-  }
+    public static void main(String[] args) {
+        if (args.length != 3) {
+            System.out.println("Usage: java SpertaClient <host:port> <username> <password>");
+            System.exit(-1);
+        }
 
-  public void startClient(){
-    try(Socket cliSoc = new Socket("localhost", port);
-        ObjectOutputStream clientInfo = new ObjectOutputStream(cliSoc.getOutputStream());
-        ObjectInputStream serverInfo = new ObjectInputStream(cliSoc.getInputStream());
-        Scanner user_input = new Scanner(System.in)) {
-			while(true) {
+        String[] serverAddress = args[0].split(":");
+        SpertaClient client = new SpertaClient();
+        client.user = args[1];
+        client.pwd = args[2];
+        client.host = serverAddress[0];
 
-        System.out.println("""
-                            Commands Available: CREATE <hm>: Create house in server
-                                                ADD <user1> <hm> <s>: Add <user1> to house <hm>, section <s>
-                                                RD <hm> <s>: Register device in <hm>, section <s>
-                                                EC <hm> <d> <int>: Send <int> to manage device <d> in house <hm>
-                                                RT <hm>: Obtain last commands of state saved in server related to <hm> 
-                                                RH <hm> <d>: Obtain history of device <d> in house <hm>""");
-        System.out.print("Enter command: ");
-				String user_Command = user_input.nextLine().trim();
-        String [] command_Args = user_Command.split(" ");
-
-				switch (command_Args[0]) {
-					case "CREATE" -> {
-            
-          }
-					case "ADD" -> {
-            
-          }
-					case "RD" -> {
-            clientInfo.writeObject(command_Args);
-            clientInfo.flush();
-            String server_Response = (String) serverInfo.readObject();
-            switch (server_Response) {
-                case "OK"-> System.out.println("OK");
-                case "NOPERM" -> System.out.println("NOPERM # no permissions");
-                case "NOHM" -> System.out.println("NOHM # no such house");
-                default -> throw new AssertionError();
+        switch (serverAddress.length) {
+            case 2 -> client.port = Integer.parseInt(serverAddress[1]);
+            case 1 -> client.port = 22345;
+            default -> {
+                System.out.println("Usage: server address should be <host> or <host:port>");
+                System.exit(-1);
             }
-          }
-					case "EC" -> {
-            
-          }
-					case "RT" -> {
-            clientInfo.writeObject(user_Command);
-            String [] server_Response = (String []) serverInfo.readObject();
-            switch (server_Response[0]) {
-              case "OK" ->{
-                System.out.println("OK, " + server_Response[1] + " (long)." );
-                try(FileOutputStream history = new FileOutputStream("history.txt", true)) {
-                  int bytesRead;
-                  int size = Integer.parseInt(server_Response[1]);
-                  byte[] buffer = new byte[1024];
-                  while(size > 0 && (bytesRead = serverInfo.read(buffer, 0, Math.min(size, buffer.length))) != -1) {
-                    history.write(buffer, 0, bytesRead);
-                    size -= bytesRead;
-                  }
-                } catch (IOException e) {
-                  System.err.println(e.getMessage());
-                  System.exit(-1);
+        }
+
+        client.startClient();
+    }
+
+    public void startClient() {
+        try (Socket cliSoc = new Socket(host, port);
+             ObjectOutputStream outStream = new ObjectOutputStream(cliSoc.getOutputStream());
+             ObjectInputStream inStream = new ObjectInputStream(cliSoc.getInputStream());
+             Scanner user_input = new Scanner(System.in)) {
+
+            outStream.writeObject(user);
+            outStream.writeObject(pwd);
+            outStream.flush();
+
+            checkSResp(inStream, outStream, user_input);
+
+            System.out.println(COMMAND_LIST);
+
+            while (true) {
+                System.out.print("Enter command: ");
+                String line = user_input.nextLine().trim();
+                if (line.isEmpty()) continue;
+
+                String[] command_Args = line.split(" ");
+                String user_Command = command_Args[0];
+
+                switch (user_Command) {
+                    case "RD" -> {
+                        outStream.writeObject(command_Args);
+                        outStream.flush();
+                        String server_Response = (String) inStream.readObject();
+                        System.out.println("Server: " + server_Response);
+                    }
+                    case "RT" -> {
+                        outStream.writeObject(command_Args); 
+                        outStream.flush();
+                        Object response = inStream.readObject();
+
+                        if (response instanceof String[]) {
+                            String[] server_Response = (String[]) response;
+                            if (server_Response[0].equals("Ok")) {
+                                System.out.println("OK, receiving " + server_Response[1] + " bytes.");
+                                try (FileOutputStream history = new FileOutputStream("history_received.txt", false)) {
+                                    int size = Integer.parseInt(server_Response[1]);
+                                    byte[] buffer = new byte[1024];
+                                    int bytesRead;
+                                    while (size > 0 && (bytesRead = inStream.read(buffer, 0, Math.min(size, buffer.length))) != -1) {
+                                        history.write(buffer, 0, bytesRead);
+                                        size -= bytesRead;
+                                    }
+                                    System.out.println("History saved to history_received.txt");
+                                }
+                            }
+                        } else {
+                            System.out.println("Server: " + response);
+                        }
+                    }
+                    case "CREATE", "ADD", "EC", "RH" -> {
+                        System.out.println("Command " + user_Command + " not yet implemented in client.");
+                    }
+                    default -> {
+                        outStream.writeObject(user_Command);
+                        String server_Response = (String) inStream.readObject();
+                        System.out.println(server_Response + "\n" + COMMAND_LIST);
+                    }
                 }
-              }
-              case "NODATA" -> System.out.println("NODATA # No data to send.");
-              case "NOHM" -> System.out.println("NOHM # " + command_Args[1] + " doesn't exist.");
-              case "NOPERM" -> System.out.println("NOPERM # no permissions");
-              default -> throw new AssertionError();
             }
-          }
-					case "RH" -> {
-            
-          }
-					default -> {
-            clientInfo.writeObject(user_Command);
-            String server_Response = (String) serverInfo.readObject();
-            System.out.println("\n" + server_Response + ": Command not recognized by server \n");
-          }
-				}
-			}
-		} catch (IOException | ClassNotFoundException e) {
-      System.err.println(e.getMessage());
-      System.exit(-1);
-		}
-	}
+        } catch (IOException | ClassNotFoundException e) {
+            System.err.println("Connection error: " + e.getMessage());
+        }
+    }
+
+    private void checkSResp(ObjectInputStream in, ObjectOutputStream out, Scanner sc) {
+        try {
+            boolean userOk = false;
+            while (!userOk) {
+                String serverMsg = (String) in.readObject();
+                if (serverMsg.equals("WRONG_PWD")) {
+                    System.out.print("Wrong password. Enter again: ");
+                    pwd = sc.nextLine();
+                    out.writeObject(pwd);
+                    out.flush();
+                } else {
+                    userOk = true;
+                    System.out.println("Server: " + serverMsg);
+                }
+            }
+        } catch (IOException | ClassNotFoundException e) {
+            System.err.println("Auth error: " + e.getMessage());
+        }
+    }
 }
