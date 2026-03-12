@@ -10,6 +10,9 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Scanner;
+import java.io.FileWriter;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 public class SpertaServer {
 	public static void main(String[] args) {
@@ -48,7 +51,7 @@ public class SpertaServer {
 
 class ServerThread extends Thread {
 	private Socket socket = null;
-
+	private String currentUser;
 	private boolean running = true;
 	private File users, workspaces;
 
