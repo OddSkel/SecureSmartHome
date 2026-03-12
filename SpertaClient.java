@@ -60,8 +60,8 @@ public class SpertaClient {
         if (line.isEmpty()) {
             continue; 
         }
-				String[] cmd = line.split(" ");
-        String user_Command = cmd[0].toUpperCase();
+        String[] parts = line.split(" ");
+        String user_Command = parts[0];
 				switch (user_Command) {
 					case "CREATE" -> {
             if (cmd.length != 2) {
