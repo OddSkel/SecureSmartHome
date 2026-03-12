@@ -45,7 +45,7 @@ class ServerThread extends Thread {
 	private Socket socket = null;
 
 	private boolean running = true;
-	private File users, homes;
+	private File users, homes, homesFolder;
   private String user, pwd;
 	private ObjectInputStream in;
 	private ObjectOutputStream out;
@@ -68,6 +68,10 @@ class ServerThread extends Thread {
       if (!homes.exists()) {
         homes.createNewFile();
       }
+      homesFolder = new File("homes");
+      if (!homesFolder.exists()) {
+        homesFolder.mkdir();
+      }
 
       try {
 				user = (String) in.readObject();
@@ -78,7 +82,9 @@ class ServerThread extends Thread {
           String client_Command = (String) in.readObject();
           switch (client_Command) {
             case "CREATE" -> {
-              createHome();
+              String houseName = (String) in.readObject();
+              System.out.println("["+ user +" Thread] CREATE command received for home: " + houseName);
+              createHome(houseName);
             }
             case "ADD" -> {
             }
@@ -137,33 +143,37 @@ class ServerThread extends Thread {
 		String newUser = user + ":" + pwd;
 		try(FileWriter fw = new FileWriter(users, true)) {
 			fw.write(newUser + System.lineSeparator());
-      System.out.println("[Thread] New user created: " + user);
+      System.out.println("[SERVER] New user created: " + user);
 		} catch (IOException e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
     }
 
-    private void createHome() {
+    private void createHome(String homeName) {
       try {
-        String homeName = (String) in.readObject();
         if(homeExists(homeName)){
           out.writeObject("HOME_EXISTS");
           out.flush();
-          System.out.println("[Thread] Home creation failed. Home already exists: " + homeName);
+          System.out.println("[" + user + " Thread] Home creation failed. Home already exists: " + homeName);
         } else {
-          out.writeObject("HOME_CREATED");
-          out.flush();
           try(FileWriter fw = new FileWriter(homes, true)) {
-            fw.write(homeName +" : "+ user + System.lineSeparator());
+            fw.write(homeName + " : "+ user + "> > " + System.lineSeparator());
 
-            System.out.println("[Thread] Home created: " + homeName);
+            File newHomeFolder = new File(homesFolder, homeName);
+            newHomeFolder.mkdirs();
+            File devicesFile = new File(newHomeFolder, "devicesLog.txt");
+            devicesFile.createNewFile();
+
+            System.out.println("[" + user + " Thread] Home created: " + homeName);
+            out.writeObject("HOME_CREATED");
+            out.flush();
           } catch (IOException e) {
             System.err.println(e.getMessage());
             System.exit(-1);
           }
         }
-      } catch (IOException | ClassNotFoundException e) {
+      } catch (IOException e) {
         System.err.println(e.getMessage());
         System.exit(-1);
       }

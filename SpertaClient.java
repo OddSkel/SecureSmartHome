@@ -57,22 +57,22 @@ public class SpertaClient {
 			while(true) {
         System.out.print("Insert command: ");
         String line = user_input.nextLine().trim();
-        if (line.isEmpty()) {
-            continue; 
-        }
         String[] parts = line.split(" ");
         String user_Command = parts[0];
 				switch (user_Command) {
 					case "CREATE" -> {
-            if (cmd.length != 2) {
+            if (parts.length != 2) {
               System.out.println("Usage: CREATE <home_name>");
-              continue;
             }else {
               outStream.writeObject(user_Command);
-              outStream.writeObject(cmd[1]);
+              outStream.writeObject(parts[1]);
               outStream.flush();
               String server_Response = (String) inStream.readObject();
-              System.out.println(server_Response);
+              if(server_Response.equals("HOME_CREATED")){
+                System.out.println("OK");
+              } else{
+                System.out.println("NOK");
+              }
             }
           }
 					case "ADD" -> {
@@ -109,7 +109,7 @@ public class SpertaClient {
       while(!userOk){
         String serverMsg = (String) in.readObject();
         if(serverMsg.equals("WRONG_PWD")){
-          System.out.print("Inserir novamente palavra-passe:");
+          System.out.print("Inserir novamente palavra-passe: ");
           pwd = sc.nextLine();
           out.writeObject(pwd);
           out.flush();
