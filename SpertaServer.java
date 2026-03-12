@@ -108,6 +108,10 @@ class ServerThread extends Thread {
                             out.flush();
                         }
                         case "EC" -> {
+							String response = processEC(command_Args, user);
+	    					out.writeObject(response);
+    						out.flush();
+    						System.out.println("[SERVER] EC executado por " + user + " na casa " + command_Args[1] + ": " + response);
                         }
                         case "RT" -> {
                             Number result = getHistory(command_Args[1], user);
@@ -252,4 +256,45 @@ class ServerThread extends Thread {
 		}
 		return 2;
     }
+
+	private String processEC(String[] args, String user) {
+    	if (args.length != 4) return "NOK_ARGS";
+
+    	String house = args[1];
+    	String device = args[2];
+    	String value = args[3];
+
+    	if (!hasPermission(house, user)) {
+        	return "NOPERM"; 
+    	}
+
+    	try {
+        	File historyFile = new File(house + "/history.txt");
+        	try (FileWriter fw = new FileWriter(historyFile, true)) {
+            	fw.write(device + ":" + value + System.lineSeparator());
+        	}
+        	return "OK";
+    	} catch (IOException e) {
+        	return "ERROR_WRITE";
+    	}
+	}
+
+	private boolean hasPermission(String house, String user) {
+    	File houseDir = new File(house);
+    	if (!houseDir.exists()) return false;
+
+    	try (Scanner sc = new Scanner(new File("users.txt"))) {
+        	while (sc.hasNextLine()) {
+            	String[] line = sc.nextLine().split(":");
+            	if (line[0].equals(house)) {
+                	for (int i = 1; i < line.length; i++) {
+                    	if (line[i].equals(user)) return true;
+                	}
+            	}
+        	}
+    	} catch (IOException e) {
+        	System.err.println("Erro ao ler users.txt: " + e.getMessage());
+    	}
+    	return false;
+	}
 }

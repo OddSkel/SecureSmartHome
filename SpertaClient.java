@@ -84,7 +84,22 @@ public class SpertaClient {
           }
 
 					case "EC" -> {
-                                
+            if (command_Args.length != 4) {
+                System.out.println("Erro: Formato correto é EC <hm> <d> <int>");
+                continue;
+            }
+            outStream.writeObject(command_Args);
+            outStream.flush();
+
+            String server_Response = (String) inStream.readObject();
+            switch (server_Response) {
+                case "OK" -> System.out.println("Comando executado com sucesso.");
+                case "NOPERM" -> System.out.println("NOPERM # Sem permissões para esta casa.");
+                case "NOHM" -> System.out.println("NOHM # A casa indicada não existe.");
+                case "NOK_ARGS" -> System.out.println("Erro: O servidor recebeu argumentos inválidos.");
+                case "ERROR_WRITE" -> System.out.println("Erro: O servidor não conseguiu escrever no ficheiro.");
+                default -> System.out.println("Erro desconhecido: " + server_Response);
+            }
           }
 					case "RT" -> {
             outStream.writeObject(command_Args);
@@ -154,5 +169,5 @@ public class SpertaClient {
   }
 
 
-  
+
 }
