@@ -76,7 +76,27 @@ public class SpertaClient {
             }
           }
 					case "ADD" -> {
-                                
+            if (parts.length != 4) {
+              System.out.println("Usage: ADD <user> <home> <secção>");
+            } else {
+              outStream.writeObject(user_Command);
+              outStream.writeObject(parts[1]);
+              outStream.writeObject(parts[2]);
+              outStream.writeObject(parts[3]);
+              outStream.flush();
+              String server_Response = (String) inStream.readObject();
+              if(server_Response.equals("USER_ADDED")){
+                System.out.println("OK");
+              } else if(server_Response.equals("USER_NOT_FOUND")){
+                System.out.println("NOUSER");
+              } else if(server_Response.equals("HOME_NOT_FOUND")){
+                System.out.println("NOHM");
+              } else if (server_Response.equals("NO_USER_PERMS")){
+                System.out.println("NOPERM");
+              } else {
+                System.out.println("NOK");
+              }
+            }
           }
 					case "RD" -> {
                                 
@@ -93,7 +113,7 @@ public class SpertaClient {
 					default -> {
             outStream.writeObject(user_Command);
             String server_Response = (String) inStream.readObject();
-            System.out.println(server_Response + COMMAND_LIST);
+            System.out.print(server_Response + "\n" + COMMAND_LIST);
           }
 				}
 			}
