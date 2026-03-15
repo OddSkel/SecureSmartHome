@@ -85,17 +85,17 @@ class ServerThread extends Thread {
 				System.out.println("["+ user +" Thread] Authentication request received for user: " + user);
         authenticate(user, pwd);
         while(running){
-          String client_Command = (String) in.readObject();
-          switch (client_Command) {
+          String [] client_Commands = (String[]) in.readObject();
+          switch (client_Commands[0]) {
             case "CREATE" -> {
-              String houseName = (String) in.readObject();
+              String houseName = client_Commands[1];
               System.out.println("["+ user +" Thread] CREATE command received for home: " + houseName);
               createHome(houseName);
             }
             case "ADD" -> {
-              String userToAdd = (String) in.readObject();
-              String homeName = (String) in.readObject();
-              String section = (String) in.readObject();
+              String userToAdd = client_Commands[1];
+              String homeName = client_Commands[2];
+              String section = client_Commands[3];
               System.out.println("["+ user +" Thread] ADD command received to add user: " + userToAdd + " to home: " + homeName + " with section: " + section);
               if(userExists(userToAdd)) {
                 if(homeExists(homeName)){

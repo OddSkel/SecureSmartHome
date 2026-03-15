@@ -44,7 +44,7 @@ public class SpertaClient {
 
   public void startClient(){
     try(Socket cliSoc = new Socket(host, port);
-        ObjectInput inStream = new ObjectInputStream(cliSoc.getInputStream());
+        ObjectInputStream inStream = new ObjectInputStream(cliSoc.getInputStream());
         ObjectOutputStream outStream = new ObjectOutputStream(cliSoc.getOutputStream());
         Scanner user_input = new Scanner(System.in)) {
 
@@ -53,19 +53,19 @@ public class SpertaClient {
       outStream.flush();
       checkSResp(inStream, outStream, user_input);
       
-      System.out.println(COMMAND_LIST);
 			while(true) {
-        System.out.print("Insert command: ");
-        String line = user_input.nextLine().trim();
-        String[] parts = line.split(" ");
-        String user_Command = parts[0];
-				switch (user_Command) {
+        System.out.println(COMMAND_LIST);
+
+				String user_Command = user_input.next();
+        String [] command_Args = user_Command.split(" ");
+
+				switch (command_Args[0]) {
 					case "CREATE" -> {
-            if (parts.length != 2) {
+            if (command_Args.length != 2) {
               System.out.println("Usage: CREATE <home_name>");
             }else {
               outStream.writeObject(user_Command);
-              outStream.writeObject(parts[1]);
+              outStream.writeObject(command_Args[1]);
               outStream.flush();
               String server_Response = (String) inStream.readObject();
               if(server_Response.equals("HOME_CREATED")){
@@ -76,13 +76,13 @@ public class SpertaClient {
             }
           }
 					case "ADD" -> {
-            if (parts.length != 4) {
+            if (command_Args.length != 4) {
               System.out.println("Usage: ADD <user> <home> <secção>");
             } else {
               outStream.writeObject(user_Command);
-              outStream.writeObject(parts[1]);
-              outStream.writeObject(parts[2]);
-              outStream.writeObject(parts[3]);
+              outStream.writeObject(command_Args[1]);
+              outStream.writeObject(command_Args[2]);
+              outStream.writeObject(command_Args[3]);
               outStream.flush();
               String server_Response = (String) inStream.readObject();
               if(server_Response.equals("USER_ADDED")){
@@ -99,21 +99,29 @@ public class SpertaClient {
             }
           }
 					case "RD" -> {
-                                
+            outStream.writeObject(command_Args);
+            outStream.flush();
+            String server_Response = (String) inStream.readObject();
+            switch (server_Response) {
+                case "OK"-> System.out.println("OK");
+                case "NOPERM" -> System.out.println("NOPERM # no permissions");
+                case "NOHM" -> System.out.println("NOHM # no such house");
+                default -> throw new AssertionError();
+            }
           }
 					case "EC" -> {
-                                
+            
           }
 					case "RT" -> {
-                                
+            
           }
 					case "RH" -> {
-                                
+            
           }
 					default -> {
             outStream.writeObject(user_Command);
             String server_Response = (String) inStream.readObject();
-            System.out.print(server_Response + "\n" + COMMAND_LIST);
+            System.out.println(server_Response + "Commands Available: CREATE, ADD, RD, EC, RT, RH");
           }
 				}
 			}
