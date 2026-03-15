@@ -11,13 +11,15 @@ public class SpertaClient {
   private String user, pwd;
 
   private static final String COMMAND_LIST =
-  "Available Commands:\n" +
-  "CREATE <hm>\n" +
-  "ADD <user> <hm> <a>\n" +
-  "RD <hm> <s>\n" +
-  "EC <hm> <d> <int>\n" +
-  "RT <hm>\n" +
-  "RH <hm> <d>";
+  """
+  Available Commands:
+  CREATE <hm>
+  ADD <user> <hm> <a>
+  RD <hm> <s>
+  EC <hm> <d> <int>
+  RT <hm>
+  RH <hm> <d>
+  """;
   public static void main(String[] args) {
     if (args.length != 3) {
       System.out.println("Usage: java SpertaClient <host:port> <username> <password>");
@@ -64,44 +66,36 @@ public class SpertaClient {
             if (parts.length != 2) {
               System.out.println("Usage: CREATE <home_name>");
             }else {
-              outStream.writeObject(user_Command);
-              outStream.writeObject(parts[1]);
+              outStream.writeObject(command_Args);
               outStream.flush();
               String server_Response = (String) inStream.readObject();
-              if(server_Response.equals("HOME_CREATED")){
-                System.out.println("OK");
-              } else{
-                System.out.println("NOK");
-              }
+              String response = server_Response.equals("HOME_CREATED") ? "OK" : "NOK";
+              System.out.println(response);
             }
           }
 					case "ADD" -> {
             if (parts.length != 4) {
               System.out.println("Usage: ADD <user> <home> <secção>");
             } else {
-              outStream.writeObject(user_Command);
-              outStream.writeObject(parts[1]);
-              outStream.writeObject(parts[2]);
-              outStream.writeObject(parts[3]);
+              outStream.writeObject(command_Args);
               outStream.flush();
               String server_Response = (String) inStream.readObject();
-              if(server_Response.equals("USER_ADDED")){
-                System.out.println("OK");
-              } else if(server_Response.equals("USER_NOT_FOUND")){
-                System.out.println("NOUSER");
-              } else if(server_Response.equals("HOME_NOT_FOUND")){
-                System.out.println("NOHM");
-              } else if (server_Response.equals("NO_USER_PERMS")){
-                System.out.println("NOPERM");
-              } else {
-                System.out.println("NOK");
+              switch (server_Response) {
+                  case "USER_ADDED" -> System.out.println("OK");
+                  case "USER_NOT_FOUND" -> System.out.println("NOUSER");
+                  case "HOME_NOT_FOUND" -> System.out.println("NOHM");
+                  case "NO_USER_PERMS" -> System.out.println("NOPERM");
+                  default -> System.out.println("NOK");
               }
             }
           }
 					case "RD" -> {
-            clientInfo.writeObject(command_Args);
-            clientInfo.flush();
-            String server_Response = (String) serverInfo.readObject();
+            if (command_Args.length != 3) {
+              System.out.println("Usage: RD <home> <s>");
+            }
+            outStream.writeObject(command_Args);
+            outStream.flush();
+            String server_Response = (String) inStream.readObject();
             switch (server_Response) {
                 case "OK"-> System.out.println("OK");
                 case "NOPERM" -> System.out.println("NOPERM # no permissions");
