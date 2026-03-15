@@ -1,3 +1,4 @@
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectInputStream;
@@ -107,7 +108,30 @@ public class SpertaClient {
             
           }
 					case "RT" -> {
-            
+            outStream.writeObject(user_Command);
+            outStream.flush();
+            String [] server_Response = (String []) inStream.readObject();
+            switch (server_Response[0]) {
+              case "OK" ->{
+                System.out.println("OK, " + server_Response[1] + " (long)." );
+                try(FileOutputStream history = new FileOutputStream("history.txt", true)) {
+                  int bytesRead;
+                  int size = Integer.parseInt(server_Response[1]);
+                  byte[] buffer = new byte[1024];
+                  while(size > 0 && (bytesRead = inStream.read(buffer, 0, Math.min(size, buffer.length))) != -1) {
+                    history.write(buffer, 0, bytesRead);
+                    size -= bytesRead;
+                  }
+                } catch (IOException e) {
+                  System.err.println(e.getMessage());
+                  System.exit(-1);
+                }
+              }
+              case "NODATA" -> System.out.println("NODATA # No data to send.");
+              case "NOHM" -> System.out.println("NOHM # " + command_Args[1] + " doesn't exist.");
+              case "NOPERM" -> System.out.println("NOPERM # no permissions");
+              default -> throw new AssertionError();
+            }
           }
 					case "RH" -> {
             

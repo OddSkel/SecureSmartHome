@@ -1,10 +1,13 @@
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
@@ -46,7 +49,6 @@ public class SpertaServer {
 class ServerThread extends Thread {
 	private Socket socket = null;
 
-	private boolean running = true;
 	private File users, homes, homesFolder;
 	private String user, pwd;
 	private ObjectInputStream in;
@@ -59,6 +61,7 @@ class ServerThread extends Thread {
 		System.out.println("thread do server para cada cliente");
 	}
 
+	@Override
 	public void run() {
 		try{
 			out = new ObjectOutputStream(socket.getOutputStream());
@@ -84,7 +87,7 @@ class ServerThread extends Thread {
 				pwd = (String) in.readObject();
 				System.out.println("["+ user +" Thread] Authentication request received for user: " + user);
 				authenticate(user, pwd);
-				while(running){
+				while(true){
 					String [] client_Commands = (String[]) in.readObject();
 					switch (client_Commands[0]) {
 						case "CREATE" -> {
@@ -124,10 +127,40 @@ class ServerThread extends Thread {
 							}
 						}
 						case "RD" -> {
+							int result = verify(client_Commands, user);
+							switch (result) {
+								case 0 -> out.writeObject("NOPERM");
+								case 1 -> out.writeObject("OK");
+								case -1 -> out.writeObject("NOHM");
+								default -> throw new AssertionError();
+							}
+							out.flush();
 						}
 						case "EC" -> {
 						}
 						case "RT" -> {
+							Number result = getHistory(client_Commands[1], user);
+							if(result instanceof Long) {
+								String [] response_To_Client = {"Ok", Long.toString((long) result)};
+								out.writeObject(response_To_Client);
+								try(FileInputStream history_To_Send = new FileInputStream("history_to_send.txt")){
+									int bytesToRead;
+									byte [] buf = new byte[1024];
+									while((bytesToRead = history_To_Send.read(buf, 0, buf.length))!= -1){
+										out.write(buf, 0, bytesToRead);
+										out.flush();
+									}
+								}
+							}
+							else if(result instanceof Integer) {
+								switch ((int) result) {
+									case 0 -> out.writeObject("NODATA");
+									case 1 -> out.writeObject("NOPERM");
+									case -1 -> out.writeObject("NOHM");
+									default -> throw new AssertionError();
+								}
+								out.flush();
+							}
 						}
 						case "RH" -> {
 						}
@@ -335,5 +368,61 @@ class ServerThread extends Thread {
 		return false;
     }
 
+	private static Number getHistory(String house, String user) {
+		File house_Dir = new File(house);
+		if(!house_Dir.exists()) return (int) -1; //NOHM
+        try(Scanner sc = new Scanner(new File("users.txt"))) {
+			while(sc.hasNextLine()){
+				String [] line = sc.nextLine().split(":");
+				if(line[0].equals(house)) {
+					for (int idx = 1; idx < line.length; idx++) {
+						if(line[idx].equals(user)) {
+							File history = new File(house + "/history.txt");
+							if(history.length() == 0) return (int) 0; //NODATA
+							File history_to_send = new File("history_to_send.txt");
+							try(Scanner sc1 = new Scanner(history); FileWriter file_To_Send = new FileWriter(history_to_send)) {
+								while(sc1.hasNextLine()){
+									String [] line1 = sc1.nextLine().split(":");
+									file_To_Send.write("Last Operation of " + line1[0] + ": " + line1[line1.length - 1] + "\n");
+								}
+								return (long) history_to_send.length(); //OK
+							} catch (IOException e) {
+								System.err.println(e.getMessage());
+								System.exit(-1);
+							}
+						}
+					}
+					return (int) 1; //NOPERM
+				}
+			}
+		} catch (IOException e) {
+			System.err.println(e.getMessage());
+			System.exit(-1);
+		}
+		return (int) 2;
+    }
 
+	private static int verify(String[] commands, String user) {
+		try(Scanner sc = new Scanner(new File("workspaces.txt"))) {
+			List<String> lines = Files.readAllLines(Paths.get("workspaces.txt"));
+			int counter_lines = 0;
+			while (sc.hasNextLine()) {
+				String line = sc.nextLine();
+				String[] lineArgs = line.split(":");
+				if (lineArgs[0].equals(commands[1]) && lineArgs[1].equals(user)) {
+					lines.set(counter_lines, commands[0] + ":" + commands[1] + "," + commands[2]);
+					Files.write(Paths.get("history.txt"), lines);
+					return 1;
+				}
+				else if (lineArgs[0].equals(commands[1]) && !lineArgs[1].equals(user)) {
+					return 0;
+				}
+				counter_lines++;
+			}
+		} catch (Exception e) {
+			System.err.println(e.getMessage());
+			System.exit(-1);
+		}
+		return -1;
+	}
 }
