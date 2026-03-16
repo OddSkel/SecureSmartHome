@@ -67,7 +67,7 @@ class ServerThread extends Thread {
 			out = new ObjectOutputStream(socket.getOutputStream());
 			in = new ObjectInputStream(socket.getInputStream());
 
-			users = new File("usersLog.txt");
+			users = new File("users.txt");
 			if (!users.exists()) {
 				users.createNewFile();
 			}
@@ -137,6 +137,25 @@ class ServerThread extends Thread {
 							out.flush();
 						}
 						case "EC" -> {
+							String homeName = client_Commands[1];
+    						String device = client_Commands[2];
+    						String value = client_Commands[3];
+    						System.out.println("[" + user + " Thread] EC command: " + homeName + " " + device + " " + value);
+
+    						if (!homeExists(homeName)) {
+        						out.writeObject("NOHM");
+    						} else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
+        					// checkOwner já existe no teu código, verifyUserPermission verifica se o user foi adicionado via ADD
+        						out.writeObject("NOPERM");
+    						} else {
+        					// 1. Atualizar o estado do dispositivo em homes/<casa>/devicesLog.txt
+        						updateDeviceState(homeName, device, value);
+        					// 2. Registar no histórico da casa em homes/<casa>/history.txt
+        						logAction(homeName, "User " + user + " set " + device + " to " + value);
+        
+        						out.writeObject("OK");
+    						}
+    						out.flush();
 						}
 						case "RT" -> {
 							Number result = getHistory(client_Commands[1], user);
@@ -424,5 +443,31 @@ class ServerThread extends Thread {
 			System.exit(-1);
 		}
 		return -1;
+	}
+
+	private boolean verifyUserPermission(String homeName, String user) {
+    	try (Scanner sc = new Scanner(homes)) { // Usa o ficheiro homes.txt que já tens
+        	while (sc.hasNextLine()) {
+           		String line = sc.nextLine();
+            	if (line.startsWith(homeName + ":")) {
+                	return line.contains(">" + user + ":") || line.contains("/" + user + ":");
+            	}
+        	}
+    	} catch (IOException e) { return false; }
+    	return false;
+	}
+
+	private void updateDeviceState(String homeName, String device, String value) {
+    	File deviceFile = new File("homes/" + homeName + "/devicesLog.txt");
+    	try (FileWriter fw = new FileWriter(deviceFile, true)) {
+        	fw.write(device + ":" + value + System.lineSeparator());
+    	} catch (IOException e) { System.err.println("Erro ao gravar dispositivo."); }
+	}
+
+	private void logAction(String homeName, String action) {
+    	File historyFile = new File("homes/" + homeName + "/history.txt");
+    	try (FileWriter fw = new FileWriter(historyFile, true)) {
+        	fw.write(System.currentTimeMillis() + " - " + action + System.lineSeparator());
+    	} catch (IOException e) { System.err.println("Erro ao gravar histórico."); }
 	}
 }
