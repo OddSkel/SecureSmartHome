@@ -57,11 +57,23 @@ public class SpertaClient {
       
       System.out.println(COMMAND_LIST);
 			while(true) {
-        System.out.print("Insert command: ");
-        String line = user_input.nextLine().trim();
-        String[] parts = line.split(" ");
-        String user_Command = parts[0];
-				switch (user_Command) {
+        System.out.println(COMMAND_LIST);
+
+        //Garante que lemos a linha toda (comando + argumentos)
+        String user_Command = "";
+        if (user_input.hasNextLine()) {
+          user_Command = user_input.nextLine();
+        }
+
+        //Limpeza técnica: se a linha vier vazia (comum após ler números anteriormente), tenta ler a próxima
+        if (user_Command.isEmpty() && user_input.hasNextLine()) {
+          user_Command = user_input.nextLine();
+        }
+
+        //Divide a string por espaços para obter os argumentos
+        String[] command_Args = user_Command.split(" ");
+
+				switch (command_Args[0]) {
 					case "CREATE" -> {
             if (parts.length != 2) {
               System.out.println("Usage: CREATE <home_name>");
@@ -104,7 +116,14 @@ public class SpertaClient {
             }
           }
 					case "EC" -> {
-            
+            if (command_Args.length != 4) {
+              System.out.println("Erro: Use EC <casa> <dispositivo> <valor>");
+            } else {
+            outStream.writeObject(command_Args);
+            outStream.flush();
+            String response = (String) inStream.readObject();
+            System.out.println(response);
+            }
           }
 					case "RT" -> {
             clientInfo.writeObject(user_Command);

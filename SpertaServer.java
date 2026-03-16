@@ -64,7 +64,7 @@ class ServerThread extends Thread {
 			out = new ObjectOutputStream(socket.getOutputStream());
 			in = new ObjectInputStream(socket.getInputStream());
 
-			users = new File("usersLog.txt");
+			users = new File("users.txt");
 			if (!users.exists()) {
 				users.createNewFile();
 			}
@@ -126,6 +126,25 @@ class ServerThread extends Thread {
 						case "RD" -> {
 						}
 						case "EC" -> {
+							String homeName = client_Commands[1];
+    						String device = client_Commands[2];
+    						String value = client_Commands[3];
+    						System.out.println("[" + user + " Thread] EC command: " + homeName + " " + device + " " + value);
+
+    						if (!homeExists(homeName)) {
+        						out.writeObject("NOHM");
+    						} else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
+        					// checkOwner já existe no teu código, verifyUserPermission verifica se o user foi adicionado via ADD
+        						out.writeObject("NOPERM");
+    						} else {
+        					// 1. Atualizar o estado do dispositivo em homes/<casa>/devicesLog.txt
+        						updateDeviceState(homeName, device, value);
+        					// 2. Registar no histórico da casa em homes/<casa>/history.txt
+        						logAction(homeName, "User " + user + " set " + device + " to " + value);
+        
+        						out.writeObject("OK");
+    						}
+    						out.flush();
 						}
 						case "RT" -> {
 						}
@@ -335,5 +354,87 @@ class ServerThread extends Thread {
 		return false;
     }
 
+	private static Number getHistory(String house, String user) {
+		File house_Dir = new File(house);
+		if(!house_Dir.exists()) return (int) -1; //NOHM
+        try(Scanner sc = new Scanner(new File("users.txt"))) {
+			while(sc.hasNextLine()){
+				String [] line = sc.nextLine().split(":");
+				if(line[0].equals(house)) {
+					for (int idx = 1; idx < line.length; idx++) {
+						if(line[idx].equals(user)) {
+							File history = new File(house + "/history.txt");
+							if(history.length() == 0) return (int) 0; //NODATA
+							File history_to_send = new File("history_to_send.txt");
+							try(Scanner sc1 = new Scanner(history); FileWriter file_To_Send = new FileWriter(history_to_send)) {
+								while(sc1.hasNextLine()){
+									String [] line1 = sc1.nextLine().split(":");
+									file_To_Send.write("Last Operation of " + line1[0] + ": " + line1[line1.length - 1] + "\n");
+								}
+								return (long) history_to_send.length(); //OK
+							} catch (IOException e) {
+								System.err.println(e.getMessage());
+								System.exit(-1);
+							}
+						}
+					}
+					return (int) 1; //NOPERM
+				}
+			}
+		} catch (IOException e) {
+			System.err.println(e.getMessage());
+			System.exit(-1);
+		}
+		return (int) 2;
+    }
 
+	private static int verify(String[] commands, String user) {
+		try(Scanner sc = new Scanner(new File("workspaces.txt"))) {
+			List<String> lines = Files.readAllLines(Paths.get("workspaces.txt"));
+			int counter_lines = 0;
+			while (sc.hasNextLine()) {
+				String line = sc.nextLine();
+				String[] lineArgs = line.split(":");
+				if (lineArgs[0].equals(commands[1]) && lineArgs[1].equals(user)) {
+					lines.set(counter_lines, commands[0] + ":" + commands[1] + "," + commands[2]);
+					Files.write(Paths.get("history.txt"), lines);
+					return 1;
+				}
+				else if (lineArgs[0].equals(commands[1]) && !lineArgs[1].equals(user)) {
+					return 0;
+				}
+				counter_lines++;
+			}
+		} catch (Exception e) {
+			System.err.println(e.getMessage());
+			System.exit(-1);
+		}
+		return -1;
+	}
+
+	private boolean verifyUserPermission(String homeName, String user) {
+    	try (Scanner sc = new Scanner(homes)) { // Usa o ficheiro homes.txt que já tens
+        	while (sc.hasNextLine()) {
+           		String line = sc.nextLine();
+            	if (line.startsWith(homeName + ":")) {
+                	return line.contains(">" + user + ":") || line.contains("/" + user + ":");
+            	}
+        	}
+    	} catch (IOException e) { return false; }
+    	return false;
+	}
+
+	private void updateDeviceState(String homeName, String device, String value) {
+    	File deviceFile = new File("homes/" + homeName + "/devicesLog.txt");
+    	try (FileWriter fw = new FileWriter(deviceFile, true)) {
+        	fw.write(device + ":" + value + System.lineSeparator());
+    	} catch (IOException e) { System.err.println("Erro ao gravar dispositivo."); }
+	}
+
+	private void logAction(String homeName, String action) {
+    	File historyFile = new File("homes/" + homeName + "/history.txt");
+    	try (FileWriter fw = new FileWriter(historyFile, true)) {
+        	fw.write(System.currentTimeMillis() + " - " + action + System.lineSeparator());
+    	} catch (IOException e) { System.err.println("Erro ao gravar histórico."); }
+	}
 }
