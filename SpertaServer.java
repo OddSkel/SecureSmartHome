@@ -138,24 +138,22 @@ class ServerThread extends Thread {
 						}
 						case "EC" -> {
 							String homeName = client_Commands[1];
-              String device = client_Commands[2];
-              String value = client_Commands[3];
-              System.out.println("[" + user + " Thread] EC command: " + homeName + " " + device + " " + value);
+							String device = client_Commands[2];
+							String value = client_Commands[3];
+							System.out.println("[" + user + " Thread] EC command: " + homeName + " " + device + " " + value);
 
-              if (!homeExists(homeName)) {
-                  out.writeObject("NOHM");
-              } else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
-                // checkOwner já existe no teu código, verifyUserPermission verifica se o user foi adicionado via ADD
-                  out.writeObject("NOPERM");
-              } else {
-                // 1. Atualizar o estado do dispositivo em homes/<casa>/devicesLog.txt
-                  updateDeviceState(homeName, device, value);
-                // 2. Registar no histórico da casa em homes/<casa>/history.txt
-                  logAction(homeName, "User " + user + " set " + device + " to " + value);
-      
-                  out.writeObject("OK");
-              }
-              out.flush();
+    						if (!homeExists(homeName)) {
+        						out.writeObject("NOHM");
+    						} else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
+        						out.writeObject("NOPERM");
+    						} else {
+        						updateDeviceState(homeName, device, value);
+        					//Registar no histórico da casa em homes/<casa>/history.txt
+        						logAction(homeName, user, device, value);
+        
+        						out.writeObject("OK");
+    						}
+    						out.flush();
 						}
 						case "RT" -> {
 							Number result = getHistory(client_Commands[1], user);
@@ -181,6 +179,23 @@ class ServerThread extends Thread {
 							}
 						}
 						case "RH" -> {
+							String homeName = client_Commands[1];
+    						// Se o utilizador escreveu "RH casa disp", o filtro é o 3º argumento
+    						String deviceFilter = (client_Commands.length == 3) ? client_Commands[2] : null;
+
+    						if (!homeExists(homeName)) {
+        						out.writeObject("NOHM");
+    						} else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
+        						out.writeObject("NOPERM");
+    						} else {
+        						ArrayList<String> history = getHistoryCSV(homeName, deviceFilter);
+        						if (history.isEmpty()) {
+            						out.writeObject("NODATA");
+        						} else {
+            						out.writeObject(history); // Envia a lista de linhas do CSV
+        						}
+    						}
+    						out.flush();
 						}
 						default -> out.writeObject("NOCOMMAND");
 					}
@@ -471,10 +486,35 @@ class ServerThread extends Thread {
     } catch (IOException e) { System.err.println("Erro ao gravar dispositivo."); }
 	}
 
-	private void logAction(String homeName, String action) {
-    File historyFile = new File("homes/" + homeName + "/history.txt");
-    try (FileWriter fw = new FileWriter(historyFile, true)) {
-      fw.write(System.currentTimeMillis() + " - " + action + System.lineSeparator());
-    } catch (IOException e) { System.err.println("Erro ao gravar histórico."); }
+	private void logAction(String homeName, String userName, String device, String value) {
+    	File historyFile = new File(homesFolder, homeName + "/history.txt");
+    	try (FileWriter fw = new FileWriter(historyFile, true)) {
+        	String csvLine = System.currentTimeMillis() + "," + userName + "," + device + "," + value;
+        	fw.write(csvLine + System.lineSeparator());
+    	} catch (IOException e) { 
+        	System.err.println("Erro ao gravar histórico."); 
+    	}	
+	}
+
+	private ArrayList<String> getHistoryCSV(String homeName, String deviceFilter) {
+    	ArrayList<String> entries = new ArrayList<>();
+    	File historyFile = new File(homesFolder, homeName + "/history.txt");
+
+    	if (!historyFile.exists()) return entries;
+
+    	try (Scanner scanner = new Scanner(historyFile)) {
+        	while (scanner.hasNextLine()) {
+            	String line = scanner.nextLine();
+            	String[] columns = line.split(","); // Divide o CSV pelas vírgulas
+            
+            	// columns[2] é o dispositivo. Se não houver filtro OU se o dispositivo coincidir:
+            	if (deviceFilter == null || (columns.length > 2 && columns[2].equals(deviceFilter))) {
+                	entries.add(line);
+            	}
+        	}
+    	} catch (IOException e) {
+        	System.err.println("Erro ao ler o histórico CSV.");
+    	}
+    	return entries;
 	}
 }
