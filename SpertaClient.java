@@ -4,6 +4,7 @@ import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
+import java.util.ArrayList;
 import java.util.Scanner;
 
 public class SpertaClient {
@@ -64,7 +65,7 @@ public class SpertaClient {
         if (user_input.hasNextLine()) {
           user_Command = user_input.nextLine();
         }
-
+        //nao tirar isto
         //Limpeza técnica: se a linha vier vazia (comum após ler números anteriormente), tenta ler a próxima
         if (user_Command.isEmpty() && user_input.hasNextLine()) {
           user_Command = user_input.nextLine();
@@ -152,6 +153,25 @@ public class SpertaClient {
             }
           }
 					case "RH" -> {
+            if (command_Args.length < 2) {
+              System.out.println("Uso: RH <casa> [dispositivo]");
+            } else {
+              outStream.writeObject(command_Args);
+              outStream.flush();
+              Object response = inStream.readObject();
+
+              if (response instanceof ArrayList<?>) {
+                ArrayList<String> lines = (ArrayList<String>) response;
+                System.out.println("--- Histórico (CSV) da Casa " + command_Args[1] + " ---");
+                System.out.println("Timestamp, Utilizador, Dispositivo, Valor");
+                for (String l : lines) {
+                  System.out.println(l);
+              }
+              } else {
+                // Caso receba "NOHM", "NOPERM" ou "NODATA"
+                System.out.println("Servidor: " + response);
+              }
+            }
             
           }
 					default -> {
