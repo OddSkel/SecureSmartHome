@@ -1,5 +1,6 @@
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
@@ -46,7 +47,7 @@ public class SpertaClient {
 
   public void startClient(){
     try(Socket cliSoc = new Socket(host, port);
-        ObjectInput inStream = new ObjectInputStream(cliSoc.getInputStream());
+        ObjectInputStream inStream = new ObjectInputStream(cliSoc.getInputStream());
         ObjectOutputStream outStream = new ObjectOutputStream(cliSoc.getOutputStream());
         Scanner user_input = new Scanner(System.in)) {
 
@@ -55,9 +56,8 @@ public class SpertaClient {
       outStream.flush();
       checkSResp(inStream, outStream, user_input);
       
-      System.out.println(COMMAND_LIST);
 			while(true) {
-        System.out.println(COMMAND_LIST);
+        System.out.print(COMMAND_LIST + "\n" + "Insert Command: ");
 
         //Garante que lemos a linha toda (comando + argumentos)
         String user_Command = "";
@@ -75,7 +75,7 @@ public class SpertaClient {
 
 				switch (command_Args[0]) {
 					case "CREATE" -> {
-            if (parts.length != 2) {
+            if (command_Args.length != 2) {
               System.out.println("Usage: CREATE <home_name>");
             }else {
               outStream.writeObject(command_Args);
@@ -86,7 +86,7 @@ public class SpertaClient {
             }
           }
 					case "ADD" -> {
-            if (parts.length != 4) {
+            if (command_Args.length != 4) {
               System.out.println("Usage: ADD <user> <home> <secção>");
             } else {
               outStream.writeObject(command_Args);
@@ -126,8 +126,9 @@ public class SpertaClient {
             }
           }
 					case "RT" -> {
-            clientInfo.writeObject(user_Command);
-            String [] server_Response = (String []) serverInfo.readObject();
+            outStream.writeObject(command_Args);
+            outStream.flush();
+            String [] server_Response = (String []) inStream.readObject();
             switch (server_Response[0]) {
               case "OK" ->{
                 System.out.println("OK, " + server_Response[1] + " (long)." );
@@ -135,7 +136,7 @@ public class SpertaClient {
                   int bytesRead;
                   int size = Integer.parseInt(server_Response[1]);
                   byte[] buffer = new byte[1024];
-                  while(size > 0 && (bytesRead = serverInfo.read(buffer, 0, Math.min(size, buffer.length))) != -1) {
+                  while(size > 0 && (bytesRead = inStream.read(buffer, 0, Math.min(size, buffer.length))) != -1) {
                     history.write(buffer, 0, bytesRead);
                     size -= bytesRead;
                   }
@@ -156,7 +157,7 @@ public class SpertaClient {
 					default -> {
             outStream.writeObject(user_Command);
             String server_Response = (String) inStream.readObject();
-            System.out.print(server_Response + "\n" + COMMAND_LIST);
+            System.out.println(server_Response + "Commands Available: CREATE, ADD, RD, EC, RT, RH");
           }
 				}
 			}
