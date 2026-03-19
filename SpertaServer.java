@@ -158,8 +158,7 @@ class ServerThread extends Thread {
 						case "RT" -> {
 							Number result = getHistory(client_Commands[1], user);
 							if(result instanceof Long) {
-								String [] response_To_Client = {"Ok", Long.toString((long) result)};
-								out.writeObject(response_To_Client);
+								out.writeObject(new String[]{"OK", Long.toString((long) result)});
 								try(FileInputStream history_To_Send = new FileInputStream("history_to_send.txt")){
 									int bytesToRead;
 									byte [] buf = new byte[1024];
@@ -171,9 +170,9 @@ class ServerThread extends Thread {
 							}
 							else if(result instanceof Integer) {
 								switch ((int) result) {
-									case 0 -> out.writeObject("NODATA");
-									case 1 -> out.writeObject("NOPERM");
-									case -1 -> out.writeObject("NOHM");
+									case 0 -> out.writeObject(new String[]{"NODATA"});
+									case 1 -> out.writeObject(new String[]{"NOPERM"});
+									case -1 -> out.writeObject(new String[]{"NOHM"});
 									default -> throw new AssertionError();
 								}
 								out.flush();
@@ -405,7 +404,7 @@ class ServerThread extends Thread {
 	private static Number getHistory(String house, String user) {
 		File house_Dir = new File(house);
 		if(!house_Dir.exists()) return (int) -1; //NOHM
-        try(Scanner sc = new Scanner(new File("users.txt"))) {
+        try(Scanner sc = new Scanner(new File("usersLog.txt"))) {
 			while(sc.hasNextLine()){
 				String [] line = sc.nextLine().split(":");
 				if(line[0].equals(house)) {
@@ -414,12 +413,15 @@ class ServerThread extends Thread {
 							File history = new File(house + "/history.txt");
 							if(history.length() == 0) return (int) 0; //NODATA
 							File history_to_send = new File("history_to_send.txt");
+							int bytesRead = 0;
 							try(Scanner sc1 = new Scanner(history); FileWriter file_To_Send = new FileWriter(history_to_send)) {
 								while(sc1.hasNextLine()){
 									String [] line1 = sc1.nextLine().split(":");
-									file_To_Send.write("Last Operation of " + line1[0] + ": " + line1[line1.length - 1] + "\n");
+									String output = "Last Operation of " + line1[0] + ": " + line1[line1.length - 1] + "\n";
+									file_To_Send.write(output);
+									bytesRead += output.getBytes().length;
 								}
-								return (long) history_to_send.length(); //OK
+								return (long) bytesRead; //OK
 							} catch (IOException e) {
 								System.err.println(e.getMessage());
 								System.exit(-1);

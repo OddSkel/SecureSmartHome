@@ -58,7 +58,7 @@ public class SpertaClient {
       checkSResp(inStream, outStream, user_input);
       
 			while(true) {
-        System.out.println(COMMAND_LIST);
+        System.out.print(COMMAND_LIST + "\n" + "Insert Command: ");
 
         //Garante que lemos a linha toda (comando + argumentos)
         String user_Command = "";
@@ -127,7 +127,7 @@ public class SpertaClient {
             }
           }
 					case "RT" -> {
-            outStream.writeObject(user_Command);
+            outStream.writeObject(command_Args);
             outStream.flush();
             String [] server_Response = (String []) inStream.readObject();
             switch (server_Response[0]) {
