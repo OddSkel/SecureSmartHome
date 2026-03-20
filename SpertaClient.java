@@ -5,6 +5,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Scanner;
 
 public class SpertaClient {
@@ -22,6 +23,9 @@ public class SpertaClient {
   RT <hm>
   RH <hm> <d>
   """;
+
+  private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
+
   public static void main(String[] args) {
     if (args.length != 3) {
       System.out.println("Usage: java SpertaClient <host:port> <username> <password>");
@@ -105,6 +109,11 @@ public class SpertaClient {
 					case "RD" -> {
             if (command_Args.length != 3) {
               System.out.println("Usage: RD <home> <s>");
+              break;
+            }
+            if (!Arrays.asList(PERMS).contains(command_Args[2])) {
+              System.out.println("Device doesn't exist. Devices available: " + Arrays.toString(PERMS));
+              break;
             }
             outStream.writeObject(command_Args);
             outStream.flush();
@@ -161,6 +170,7 @@ public class SpertaClient {
               Object response = inStream.readObject();
 
               if (response instanceof ArrayList<?>) {
+                @SuppressWarnings("unchecked")
                 ArrayList<String> lines = (ArrayList<String>) response;
                 System.out.println("--- Histórico (CSV) da Casa " + command_Args[1] + " ---");
                 System.out.println("Timestamp, Utilizador, Dispositivo, Valor");

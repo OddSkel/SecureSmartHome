@@ -7,7 +7,7 @@ import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
@@ -138,22 +138,22 @@ class ServerThread extends Thread {
 						}
 						case "EC" -> {
 							String homeName = client_Commands[1];
-              String device = client_Commands[2];
-              String value = client_Commands[3];
-              System.out.println("[" + user + " Thread] EC command: " + homeName + " " + device + " " + value);
+							String device = client_Commands[2];
+							String value = client_Commands[3];
+							System.out.println("[" + user + " Thread] EC command: " + homeName + " " + device + " " + value);
 
-              if (!homeExists(homeName)) {
-                  out.writeObject("NOHM");
-              } else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
-                  out.writeObject("NOPERM");
-              } else {
-                  updateDeviceState(homeName, device, value);
-                //Registar no histórico da casa em homes/<casa>/history.txt
-                  logAction(homeName, user, device, value);
-      
-                  out.writeObject("OK");
-              }
-              out.flush();
+							if (!homeExists(homeName)) {
+								out.writeObject("NOHM");
+							} else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
+								out.writeObject("NOPERM");
+							} else {
+								updateDeviceState(homeName, device, value);
+								//Registar no histórico da casa em homes/<casa>/history.txt
+								logAction(homeName, user, device, value);
+					
+								out.writeObject("OK");
+							}
+							out.flush();
 						}
 						case "RT" -> {
 							Number result = getHistory(client_Commands[1], user);
@@ -181,21 +181,21 @@ class ServerThread extends Thread {
 						case "RH" -> {
 							String homeName = client_Commands[1];
     						// Se o utilizador escreveu "RH casa disp", o filtro é o 3º argumento
-              String deviceFilter = (client_Commands.length == 3) ? client_Commands[2] : null;
+							String deviceFilter = (client_Commands.length == 3) ? client_Commands[2] : null;
 
-              if (!homeExists(homeName)) {
-                  out.writeObject("NOHM");
-              } else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
-                  out.writeObject("NOPERM");
-              } else {
-                  ArrayList<String> history = getHistoryCSV(homeName, deviceFilter);
-                  if (history.isEmpty()) {
-                      out.writeObject("NODATA");
-                  } else {
-                      out.writeObject(history); // Envia a lista de linhas do CSV
-                  }
-              }
-              out.flush();
+							if (!homeExists(homeName)) {
+								out.writeObject("NOHM");
+							} else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
+								out.writeObject("NOPERM");
+							} else {
+								ArrayList<String> history = getHistoryCSV(homeName, deviceFilter);
+								if (history.isEmpty()) {
+									out.writeObject("NODATA");
+								} else {
+									out.writeObject(history); // Envia a lista de linhas do CSV
+								}
+							}
+							out.flush();
 						}
 						default -> out.writeObject("NOCOMMAND");
 					}
@@ -443,37 +443,60 @@ class ServerThread extends Thread {
 		return (int) 2;
     }
 
-	private static int verify(String[] commands, String user) {
-		try(Scanner sc = new Scanner(new File("workspaces.txt"))) {
-			List<String> lines = Files.readAllLines(Paths.get("workspaces.txt"));
-			int counter_lines = 0;
+	private int verify(String[] commands, String user) {
+		if(!homeExists(commands[1])) return -1; //NOHM
+		try(Scanner sc = new Scanner(new File("homesLog.txt"))) {
+			Path path = Path.of("homesLog.txt");
+			List<String> lines = Files.readAllLines(path);
+			List<String> updated = new ArrayList<>();
 			while (sc.hasNextLine()) {
-				String line = sc.nextLine();
-				String[] lineArgs = line.split(":");
-				if (lineArgs[0].equals(commands[1]) && lineArgs[1].equals(user)) {
-					lines.set(counter_lines, commands[0] + ":" + commands[1] + "," + commands[2]);
-					Files.write(Paths.get("history.txt"), lines);
-					return 1;
-				}
-				else if (lineArgs[0].equals(commands[1]) && !lineArgs[1].equals(user)) {
-					return 0;
-				}
-				counter_lines++;
+				if (verifyUserPermission(commands[1], user) || checkOwner(commands[1], user)) {
+					for (String line : lines) {
+						int last = line.lastIndexOf('>');
+						String devicesPart = line.substring(last + 1);
+						String owners = line.substring(0, last);
+						String [] devices = devicesPart.split(";");
+						int i = 0;
+						while (!devices[i].contains(commands[2])) i++;
+						line = updatedDevice(devices, devices[i]);
+						updated.add(owners + ">" + line);
+					}
+					Files.write(path, updated);
+					return 1; //OK
+				} else return 0; //NOPERM
 			}
 		} catch (Exception e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
-		return -1;
+		return 2;
 	}
 
-	private boolean verifyUserPermission(String homeName, String user) {
+	private String updatedDevice(String[] devices, String Key) {
+		StringBuilder sB = new StringBuilder();
+		String [] targetKey = Key.split(":");
+		for (int i = 0; i < devices.length; i++) {
+			String [] kV = devices[i].split(":");
+			String key = kV[0];
+			String value = kV[1];
+			if (key.equals(targetKey[0])){
+				int counter = Integer.parseInt(value);
+				counter++;
+				value = String.valueOf(counter);
+			}
+			sB.append(key).append(":").append(value);
+			if (i < devices.length - 1) sB.append(";");
+		}
+		return sB.toString();
+    }
+
+    private boolean verifyUserPermission(String homeName, String user) {
     try (Scanner sc = new Scanner(homes)) { // Usa o ficheiro homes.txt que já tens
         while (sc.hasNextLine()) {
-          String line = sc.nextLine();
-          if (line.startsWith(homeName + ":")) {
-            return line.contains(">" + user + ":") || line.contains("/" + user + ":");
-          }
+			String line = sc.nextLine();
+			if (line.startsWith(homeName + ":")) {
+				return line.contains(">" + user + ":") || line.contains("/" + user + ":");
+			}
         }
     } catch (IOException e) { return false; }
     return false;
