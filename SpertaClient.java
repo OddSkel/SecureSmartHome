@@ -105,6 +105,7 @@ public class SpertaClient {
 					case "RD" -> {
             if (command_Args.length != 3) {
               System.out.println("Usage: RD <home> <s>");
+              break;
             }
             outStream.writeObject(command_Args);
             outStream.flush();
@@ -127,13 +128,17 @@ public class SpertaClient {
             }
           }
 					case "RT" -> {
+            if (command_Args.length != 2) {
+              System.out.println("Usage: RT <home>");
+              break;
+            }
             outStream.writeObject(command_Args);
             outStream.flush();
             String [] server_Response = (String []) inStream.readObject();
             switch (server_Response[0]) {
               case "OK" ->{
                 System.out.println("OK, " + server_Response[1] + " (long)." );
-                try(FileOutputStream history = new FileOutputStream("history.txt", true)) {
+                try(FileOutputStream history = new FileOutputStream("history.txt")) {
                   int bytesRead;
                   int size = Integer.parseInt(server_Response[1]);
                   byte[] buffer = new byte[1024];
@@ -161,6 +166,7 @@ public class SpertaClient {
               Object response = inStream.readObject();
 
               if (response instanceof ArrayList<?>) {
+                @SuppressWarnings("unchecked")
                 ArrayList<String> lines = (ArrayList<String>) response;
                 System.out.println("--- Histórico (CSV) da Casa " + command_Args[1] + " ---");
                 System.out.println("Timestamp, Utilizador, Dispositivo, Valor");
@@ -175,7 +181,7 @@ public class SpertaClient {
             
           }
 					default -> {
-            outStream.writeObject(user_Command);
+            outStream.writeObject(command_Args);
             String server_Response = (String) inStream.readObject();
             System.out.println(server_Response + "Commands Available: CREATE, ADD, RD, EC, RT, RH");
           }

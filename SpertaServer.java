@@ -142,24 +142,24 @@ class ServerThread extends Thread {
 							String value = client_Commands[3];
 							System.out.println("[" + user + " Thread] EC command: " + homeName + " " + device + " " + value);
 
-    						if (!homeExists(homeName)) {
-        						out.writeObject("NOHM");
-    						} else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
-        						out.writeObject("NOPERM");
-    						} else {
-        						updateDeviceState(homeName, device, value);
-        					//Registar no histórico da casa em homes/<casa>/history.txt
-        						logAction(homeName, user, device, value);
-        
-        						out.writeObject("OK");
-    						}
-    						out.flush();
+							if (!homeExists(homeName)) {
+								out.writeObject("NOHM");
+							} else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
+								out.writeObject("NOPERM");
+							} else {
+								updateDeviceState(homeName, device, value);
+								//Registar no histórico da casa em homes/<casa>/history.txt
+								logAction(homeName, user, device, value);
+					
+								out.writeObject("OK");
+							}
+							out.flush();
 						}
 						case "RT" -> {
 							Number result = getHistory(client_Commands[1], user);
 							if(result instanceof Long) {
 								out.writeObject(new String[]{"OK", Long.toString((long) result)});
-								try(FileInputStream history_To_Send = new FileInputStream("history_to_send.txt")){
+								try(FileInputStream history_To_Send = new FileInputStream("homes/" + client_Commands[1] + "/history_to_send.txt")){
 									int bytesToRead;
 									byte [] buf = new byte[1024];
 									while((bytesToRead = history_To_Send.read(buf, 0, buf.length))!= -1){
@@ -264,11 +264,11 @@ class ServerThread extends Thread {
 					File devicesFile = new File(newHomeFolder, "devicesLog.txt");
 					devicesFile.createNewFile();
 
-          for(String section : PERMS) {
-            if(section.equals("all")) continue;
-            File sectionFolder = new File(newHomeFolder, section);
-            sectionFolder.mkdirs();
-          }
+					for(String section : PERMS) {
+						if(section.equals("all")) continue;
+						File sectionFolder = new File(newHomeFolder, section);
+						sectionFolder.mkdirs();
+					}
 
 					System.out.println("[" + user + " Thread] Home created: " + homeName);
 					out.writeObject("HOME_CREATED");
@@ -407,17 +407,20 @@ class ServerThread extends Thread {
     }
 
 	private static Number getHistory(String house, String user) {
-		File house_Dir = new File(house);
+		File house_Dir = new File("homes/" + house);
 		if(!house_Dir.exists()) return (int) -1; //NOHM
-        try(Scanner sc = new Scanner(new File("usersLog.txt"))) {
+        try(Scanner sc = new Scanner(new File(house_Dir.getAbsolutePath()+ "devicesLog.txt"))) {
 			while(sc.hasNextLine()){
-				String [] line = sc.nextLine().split(":");
-				if(line[0].equals(house)) {
+				String [] line = sc.nextLine().split(">");
+				String [] house_Owner = line[0].split(":");
+				if(house_Owner[0].equals(house)) {
 					for (int idx = 1; idx < line.length; idx++) {
-						if(line[idx].equals(user)) {
-							File history = new File(house + "/history.txt");
+						String [] user_Perm = line[idx].split(":");
+						if(house_Owner[1].equals(user) || user_Perm[0].equals(user)) {
+							//Still missing place to read
+							File history = new File(house_Dir.getAbsolutePath() + "/devicesLog.txt");
 							if(history.length() == 0) return (int) 0; //NODATA
-							File history_to_send = new File("history_to_send.txt");
+							File history_to_send = new File(house_Dir.getAbsolutePath() + "/history_to_send.txt");
 							int bytesRead = 0;
 							try(Scanner sc1 = new Scanner(history); FileWriter file_To_Send = new FileWriter(history_to_send)) {
 								while(sc1.hasNextLine()){
