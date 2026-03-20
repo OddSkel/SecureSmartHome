@@ -481,11 +481,14 @@ class ServerThread extends Thread {
 						int last = line.lastIndexOf('>');
 						String devicesPart = line.substring(last + 1);
 						String owners = line.substring(0, last);
-						String [] devices = devicesPart.split(";");
-						int i = 0;
-						while (!devices[i].contains(commands[2])) i++;
-						line = updatedDevice(devices, devices[i]);
-						updated.add(owners + ">" + line);
+						String [] house_Owner = line.split(">");
+						if (house_Owner[0].contains(user) && house_Owner[0].contains(commands[1])) {
+							String [] devices = devicesPart.split(";");
+							int i = 0;
+							while (!devices[i].contains(commands[2])) i++;
+							line = updatedDevice(devices, devices[i]);
+							updated.add(owners + ">" + line);
+						} else updated.add(line);
 					}
 					Files.write(path, updated);
 					return 1; //OK
