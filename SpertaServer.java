@@ -1,5 +1,6 @@
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -9,7 +10,9 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
 
 public class SpertaServer {
@@ -159,7 +162,7 @@ class ServerThread extends Thread {
 							Number result = getHistory(client_Commands[1], user);
 							if(result instanceof Long) {
 								out.writeObject(new String[]{"OK", Long.toString((long) result)});
-								try(FileInputStream history_To_Send = new FileInputStream("homes/" + client_Commands[1] + "/history_to_send.txt")){
+								try(FileInputStream history_To_Send = new FileInputStream("homes/" + client_Commands[1] + "/recent.txt")){
 									int bytesToRead;
 									byte [] buf = new byte[1024];
 									while((bytesToRead = history_To_Send.read(buf, 0, buf.length))!= -1){
@@ -392,58 +395,78 @@ class ServerThread extends Thread {
     }
 
     private boolean hasPerm(String data, String section) {
-      String[] userPerms = data.split(",");
-      for (String perm : userPerms) {
-        if (perm.equals(section)) return true;
-      }
-      return false;
+		String[] userPerms = data.split(",");
+		for (String perm : userPerms) {
+			if (perm.equals(section)) return true;
+		}
+		return false;
     }
 
     private boolean isValidSection(String section) {
-      for (String perm : PERMS) {
-        if (perm.equals(section)) return true;
-      }
-      return false;
-    }
+		for (String perm : PERMS) {
+			if (perm.equals(section)) return true;
+		}
+		return false;
+	}
 
-	private static Number getHistory(String house, String user) {
-		File house_Dir = new File("homes/" + house);
-		if(!house_Dir.exists()) return (int) -1; //NOHM
-        try(Scanner sc = new Scanner(new File(house_Dir.getAbsolutePath()+ "devicesLog.txt"))) {
-			while(sc.hasNextLine()){
-				String [] line = sc.nextLine().split(">");
-				String [] house_Owner = line[0].split(":");
-				if(house_Owner[0].equals(house)) {
-					for (int idx = 1; idx < line.length; idx++) {
-						String [] user_Perm = line[idx].split(":");
-						if(house_Owner[1].equals(user) || user_Perm[0].equals(user)) {
-							//Still missing place to read
-							File history = new File(house_Dir.getAbsolutePath() + "/devicesLog.txt");
-							if(history.length() == 0) return (int) 0; //NODATA
-							File history_to_send = new File(house_Dir.getAbsolutePath() + "/history_to_send.txt");
-							int bytesRead = 0;
-							try(Scanner sc1 = new Scanner(history); FileWriter file_To_Send = new FileWriter(history_to_send)) {
-								while(sc1.hasNextLine()){
-									String [] line1 = sc1.nextLine().split(":");
-									String output = "Last Operation of " + line1[0] + ": " + line1[line1.length - 1] + "\n";
-									file_To_Send.write(output);
-									bytesRead += output.getBytes().length;
+	private Number getHistory(String house, String user) {
+		File home = new File("homes/" + house);
+		if(!homeExists(house)) return (int) -1; //NOHM
+		try(FileOutputStream recent = new FileOutputStream(home.getAbsolutePath() + "/recent.txt");
+			Scanner sc = new Scanner(new File("homesLog.txt"))) {
+
+			List<String> devices_Lines = Files.readAllLines(Path.of(home.getAbsolutePath() + "/devicesLog.txt"));
+			Map<String, String> latestByDevice = new LinkedHashMap<>();
+			long countLength = 0;
+
+			if(checkOwner(house, user)) {
+				File devicesLog = new File(home.getPath() + "/devicesLog.txt");
+				if (devicesLog.length() == 0) return (int) 0; //NODATA
+				for (String line : devices_Lines) {
+					String[] parts = line.split(":");
+					latestByDevice.put(parts[0], parts[1]);
+				}
+			}
+
+			else if(verifyUserPermission(house, user)) {
+				File devicesLog = new File(home.getPath() + "/devicesLog.txt");
+				if (devicesLog.length() == 0) return (int) 0; //NODATA
+				while (sc.hasNextLine()) {
+					String homesLine = sc.nextLine();
+					if (homesLine.contains(house)) {
+						String [] owners = homesLine.split(">");
+						String [] users_from_File = owners[1].split("/");
+
+						for (String user1 : users_from_File) {
+							String [] devices = user1.split(":");
+
+							if (user.equals(devices[0])) {
+								for (String line : devices_Lines) {
+									String[] parts = line.split(":");
+
+									if (parts[0].contains(devices[1]) || devices[1].equals("all"))
+										latestByDevice.put(parts[0], parts[1]);
 								}
-								return (long) bytesRead; //OK
-							} catch (IOException e) {
-								System.err.println(e.getMessage());
-								System.exit(-1);
 							}
 						}
 					}
-					return (int) 1; //NOPERM
 				}
+			} else {
+				return (int) 1; //NOPERM
 			}
-		} catch (IOException e) {
+			for (Map.Entry<String, String> entry : latestByDevice.entrySet()) {
+				String new_line = entry.getKey() + ":" + entry.getValue() + System.lineSeparator();
+				recent.write(new_line.getBytes());
+				countLength += new_line.getBytes().length;
+			}
+			return countLength; //OK
+
+		} catch (Exception e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
-		return (int) 2;
+
+        return (int) 2; //ERROR
     }
 
 	private int verify(String[] commands, String user) {
