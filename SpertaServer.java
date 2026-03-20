@@ -450,7 +450,7 @@ class ServerThread extends Thread {
 			List<String> lines = Files.readAllLines(path);
 			List<String> updated = new ArrayList<>();
 			while (sc.hasNextLine()) {
-				if (verifyUserPermission(commands[1], user) || checkOwner(commands[1], user)) {
+				if (checkOwner(commands[1], user)) {
 					for (String line : lines) {
 						int last = line.lastIndexOf('>');
 						String devicesPart = line.substring(last + 1);
