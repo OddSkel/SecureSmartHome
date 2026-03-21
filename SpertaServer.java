@@ -9,6 +9,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -477,8 +478,7 @@ class ServerThread extends Thread {
 
 	private int verify(String[] commands, String user) {
 		if(!homeExists(commands[1])) return -1; //NOHM
-		try(Scanner sc = new Scanner(new File("homesLog.txt"));
-		FileWriter fW = new FileWriter(Path.of("homes", commands[1], commands[2]) + "/deviceLog.txt", true)) {
+		try(Scanner sc = new Scanner(new File("homesLog.txt"))) {
 			Path path = Path.of("homesLog.txt");
 			List<String> lines = Files.readAllLines(path);
 			List<String> updated = new ArrayList<>();
@@ -493,12 +493,11 @@ class ServerThread extends Thread {
 							String [] devices = devicesPart.split(";");
 							int i = 0;
 							while (!devices[i].contains(commands[2])) i++;
-							line = updatedDevice(devices, devices[i]);
+							line = updatedDevice(devices, devices[i], commands);
 							updated.add(owners + ">" + line);
 						} else updated.add(line);
 					}
 					Files.write(path, updated);
-					fW.write(System.currentTimeMillis() + "," + user + "," + commands[0] + "," + commands[2] + System.lineSeparator());
 					return 1; //OK
 				} else return 0; //NOPERM
 			}
@@ -509,7 +508,7 @@ class ServerThread extends Thread {
 		return 2;
 	}
 
-	private String updatedDevice(String[] devices, String Key) {
+	private String updatedDevice(String[] devices, String Key, String [] target) {
 		StringBuilder sB = new StringBuilder();
 		String [] targetKey = Key.split(":");
 		for (int i = 0; i < devices.length; i++) {
@@ -520,6 +519,12 @@ class ServerThread extends Thread {
 				int counter = Integer.parseInt(value);
 				counter++;
 				value = String.valueOf(counter);
+				try(FileWriter fW = new FileWriter(Paths.get("homes/" + target[1], target[2], target[2] + value + ".txt").toString())) {
+					fW.write(System.currentTimeMillis() + "," + key + ":" + value + System.lineSeparator());
+				} catch (Exception e) {
+					System.err.println(e.getMessage());
+					System.exit(-1);
+				}
 			}
 			sB.append(key).append(":").append(value);
 			if (i < devices.length - 1) sB.append(";");
