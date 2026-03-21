@@ -106,13 +106,19 @@ class ServerThread extends Thread {
 							if(userExists(userToAdd)) {
 								if(homeExists(homeName)){
 								if(checkOwner(homeName, user)) {
-									if(!isValidSection(section)) {
-									out.writeObject("INVALID_SECTION");
-									out.flush();
-									System.out.println("["+ user +" Thread] ADD command failed. Invalid section: " + section);
-									}else{
-									addUserToHome(userToAdd, homeName, section);
-									}
+                  if(checkOwner(homeName, userToAdd)){
+                    out.writeObject("USER_ADDING_SELF");
+                    out.flush();
+                    System.out.println("["+ user +" Thread] ADD command failed. User cannot add itself to home: " + homeName);
+                  } else{
+                    if(!isValidSection(section)) {
+                    out.writeObject("INVALID_SECTION");
+                    out.flush();
+                    System.out.println("["+ user +" Thread] ADD command failed. Invalid section: " + section);
+                    }else{
+                    addUserToHome(userToAdd, homeName, section);
+                    }
+                  }
 								} else {
 									out.writeObject("NO_USER_PERMS");
 									out.flush();
@@ -260,7 +266,7 @@ class ServerThread extends Thread {
 				System.out.println("[" + user + " Thread] Home creation failed. Home already exists: " + homeName);
 			} else {
 				try(FileWriter fw = new FileWriter(homes, true)) {
-					fw.write(homeName + ":"+ user + ">>" + System.lineSeparator());
+					fw.write(homeName + ":"+ user + ">>E:0;G:0;L:0;M:0;P:0;S:0" + System.lineSeparator());
 
 					File newHomeFolder = new File(homesFolder, homeName);
 					newHomeFolder.mkdirs();
