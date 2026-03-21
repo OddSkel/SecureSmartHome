@@ -471,7 +471,8 @@ class ServerThread extends Thread {
 
 	private int verify(String[] commands, String user) {
 		if(!homeExists(commands[1])) return -1; //NOHM
-		try(Scanner sc = new Scanner(new File("homesLog.txt"))) {
+		try(Scanner sc = new Scanner(new File("homesLog.txt"));
+		FileWriter fW = new FileWriter(Path.of("homes", commands[1], commands[2]) + "/deviceLog.txt", true)) {
 			Path path = Path.of("homesLog.txt");
 			List<String> lines = Files.readAllLines(path);
 			List<String> updated = new ArrayList<>();
@@ -491,6 +492,7 @@ class ServerThread extends Thread {
 						} else updated.add(line);
 					}
 					Files.write(path, updated);
+					fW.write(System.currentTimeMillis() + "," + user + "," + commands[0] + "," + commands[2] + System.lineSeparator());
 					return 1; //OK
 				} else return 0; //NOPERM
 			}
