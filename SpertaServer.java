@@ -106,25 +106,25 @@ class ServerThread extends Thread {
 							System.out.println("["+ user +" Thread] ADD command received to add user: " + userToAdd + " to home: " + homeName + " with section: " + section);
 							if(userExists(userToAdd)) {
 								if(homeExists(homeName)){
-								if(checkOwner(homeName, user)) {
-                  if(checkOwner(homeName, userToAdd)){
-                    out.writeObject("USER_ADDING_SELF");
-                    out.flush();
-                    System.out.println("["+ user +" Thread] ADD command failed. User cannot add itself to home: " + homeName);
-                  } else{
-                    if(!isValidSection(section)) {
-                    out.writeObject("INVALID_SECTION");
-                    out.flush();
-                    System.out.println("["+ user +" Thread] ADD command failed. Invalid section: " + section);
-                    }else{
-                    addUserToHome(userToAdd, homeName, section);
-                    }
-                  }
-								} else {
-									out.writeObject("NO_USER_PERMS");
-									out.flush();
-									System.out.println("["+ user +" Thread] ADD command failed. User does not have permissions to add users to home: " + homeName);
-								}
+									if(checkOwner(homeName, user)) {
+										if(checkOwner(homeName, userToAdd)){
+											out.writeObject("USER_ADDING_SELF");
+											out.flush();
+											System.out.println("["+ user +" Thread] ADD command failed. User cannot add itself to home: " + homeName);
+										} else{
+											if(!isValidSection(section)) {
+											out.writeObject("INVALID_SECTION");
+											out.flush();
+											System.out.println("["+ user +" Thread] ADD command failed. Invalid section: " + section);
+											}else{
+												addUserToHome(userToAdd, homeName, section);
+											}
+										}
+									} else {
+										out.writeObject("NO_USER_PERMS");
+										out.flush();
+										System.out.println("["+ user +" Thread] ADD command failed. User does not have permissions to add users to home: " + homeName);
+									}
 								} else {
 								out.writeObject("HOME_NOT_FOUND");
 								out.flush();
@@ -195,7 +195,8 @@ class ServerThread extends Thread {
 							Number result = getHistory(client_Commands[1], user);
 							if(result instanceof Long) {
 								out.writeObject(new String[]{"OK", Long.toString((long) result)});
-								try(FileInputStream history_To_Send = new FileInputStream("homes/" + client_Commands[1] + "/recent.txt")){
+								File f = new File("homes/" + client_Commands[1] + "/recent.txt");
+								try(FileInputStream history_To_Send = new FileInputStream(f)){
 									int bytesToRead;
 									byte [] buf = new byte[1024];
 									while((bytesToRead = history_To_Send.read(buf, 0, buf.length))!= -1){
@@ -203,6 +204,7 @@ class ServerThread extends Thread {
 										out.flush();
 									}
 								}
+								f.delete();
 							}
 							else if(result instanceof Integer) {
 								switch ((int) result) {
