@@ -147,21 +147,31 @@ class ServerThread extends Thread {
 							out.flush();
 						}
 						case "EC" -> {
-							String homeName = client_Commands[1];
-							String device = client_Commands[2];
-							String value = client_Commands[3];
-							System.out.println("[" + user + " Thread] EC command: " + homeName + " " + device + " " + value);
+							if (client_Commands.length < 4) {
+                                out.writeObject("INVALID_ARGUMENTS");
+                                out.flush();
+                                break;
+                            }
 
-							if (!homeExists(homeName)) {
-								out.writeObject("NOHM");
-							} else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
+                            String homeNameEC = client_Commands[1]; 
+                            String deviceName = client_Commands[2]; 
+                            String commandVal = client_Commands[3]; 
+
+                            if (!checkOwner(homeNameEC, user) && !verifyUserPermission(homeNameEC, user)) {
 								out.writeObject("NOPERM");
 							} else {
-								updateDeviceState(homeName, device, value);
-								//Registar no histórico da casa em homes/<casa>/history.txt
-								logAction(homeName, user, device, value);
-					
-								out.writeObject("OK");
+								String division = deviceName.substring(0, 1).toUpperCase(); 
+								File deviceFile = new File("homes/" + homeNameEC + "/" + division + "/" + deviceName + ".txt");
+
+								if (deviceFile.exists()) {
+									try (FileWriter fwDevice = new FileWriter(deviceFile, true)) {
+										fwDevice.write(System.currentTimeMillis() + "," + deviceName + "," + commandVal + System.lineSeparator());
+									}
+									updateGlobalDeviceLog(homeNameEC, deviceName, commandVal);
+									out.writeObject("OK");
+								} else {
+									out.writeObject("DEVICE_NOT_FOUND");
+								}
 							}
 							out.flush();
 						}
@@ -544,21 +554,26 @@ class ServerThread extends Thread {
     return false;
 	}
 
-	private void updateDeviceState(String homeName, String device, String value) {
-    File deviceFile = new File("homes/" + homeName + "/devicesLog.txt");
-    try (FileWriter fw = new FileWriter(deviceFile, true)) {
-      fw.write(device + ":" + value + System.lineSeparator());
-    } catch (IOException e) { System.err.println("Erro ao gravar dispositivo."); }
-	}
-
-	private void logAction(String homeName, String userName, String device, String value) {
-    File historyFile = new File(homesFolder, homeName + "/history.txt");
-    try (FileWriter fw = new FileWriter(historyFile, true)) {
-        String csvLine = System.currentTimeMillis() + "," + userName + "," + device + "," + value;
-        fw.write(csvLine + System.lineSeparator());
-    } catch (IOException e) { 
-        System.err.println("Erro ao gravar histórico."); 
-    }	
+	private void updateGlobalDeviceLog(String homeName, String deviceName, String lastValue) {
+		File globalLog = new File("homes/" + homeName + "/devicesLog.txt");
+		Map<String, String> states = new LinkedHashMap<>();
+		try {
+			if (globalLog.exists()) {
+				List<String> lines = Files.readAllLines(globalLog.toPath());
+				for (String line : lines) {
+					String[] parts = line.split(":");
+					if (parts.length >= 2) states.put(parts[0], parts[1]);
+				}
+			}
+			states.put(deviceName, lastValue);
+			try (FileWriter fw = new FileWriter(globalLog, false)) {
+				for (Map.Entry<String, String> entry : states.entrySet()) {
+					fw.write(entry.getKey() + ":" + entry.getValue() + System.lineSeparator());
+				}
+			}
+		} catch (IOException e) {
+			System.err.println("Erro ao atualizar log global.");
+		}
 	}
 
 	private ArrayList<String> getHistoryCSV(String homeName, String deviceFilter) {
