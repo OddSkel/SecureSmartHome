@@ -127,12 +127,20 @@ public class SpertaClient {
           }
 					case "EC" -> {
             if (command_Args.length != 4) {
-              System.out.println("Erro: Use EC <casa> <dispositivo> <valor>");
+                System.out.println("Erro: Use EC <casa> <dispositivo> <valor>");
             } else {
-            outStream.writeObject(command_Args);
-            outStream.flush();
-            String response = (String) inStream.readObject();
-            System.out.println(response);
+                outStream.writeObject(command_Args);
+                outStream.flush();
+                String response = (String) inStream.readObject();
+
+                switch (response) {
+                    case "OK" -> System.out.println("OK");
+                    case "NOK" -> System.out.println("NOK # valor inválido");
+                    case "NOHM" -> System.out.println("NOHM # esta casa não existe");
+                    case "NOD" -> System.out.println("NOD # este dispositivo não existe");
+                    case "NOPERM" -> System.out.println("NOPERM # sem permissões para este dispositivo");
+                    default -> System.out.println("Servidor: " + response);
+                }
             }
           }
 					case "RT" -> {

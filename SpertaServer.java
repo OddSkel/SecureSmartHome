@@ -148,29 +148,45 @@ class ServerThread extends Thread {
 						}
 						case "EC" -> {
 							if (client_Commands.length < 4) {
-                                out.writeObject("INVALID_ARGUMENTS");
-                                out.flush();
-                                break;
-                            }
+								out.writeObject("NOK");
+								out.flush();
+								break;
+							}
 
-                            String homeNameEC = client_Commands[1]; 
-                            String deviceName = client_Commands[2]; 
-                            String commandVal = client_Commands[3]; 
+							String homeNameEC = client_Commands[1]; 
+							String deviceName = client_Commands[2]; 
+							String valStr = client_Commands[3]; 
 
-                            if (!checkOwner(homeNameEC, user) && !verifyUserPermission(homeNameEC, user)) {
+							if (!homeExists(homeNameEC)) {
+								out.writeObject("NOHM");
+							} 
+							else if (!checkOwner(homeNameEC, user) && !verifyUserPermission(homeNameEC, user)) {
 								out.writeObject("NOPERM");
-							} else {
-								String division = deviceName.substring(0, 1).toUpperCase(); 
-								File deviceFile = new File("homes/" + homeNameEC + "/" + division + "/" + deviceName + ".txt");
+							} 
+							else {
+								try {
+									int value = Integer.parseInt(valStr);
 
-								if (deviceFile.exists()) {
-									try (FileWriter fwDevice = new FileWriter(deviceFile, true)) {
-										fwDevice.write(System.currentTimeMillis() + "," + deviceName + "," + commandVal + System.lineSeparator());
+									if (value < 0 || value > 600) {
+										out.writeObject("NOK");
+									} else {
+										String division = deviceName.substring(0, 1).toUpperCase(); 
+										File deviceFile = new File("homes/" + homeNameEC + "/" + division + "/" + deviceName + ".txt");
+
+										if (deviceFile.exists()) {
+											try (FileWriter fwDevice = new FileWriter(deviceFile, true)) {
+												fwDevice.write(System.currentTimeMillis() + "," + deviceName + "," + value + System.lineSeparator());
+											}
+											updateGlobalDeviceLog(homeNameEC, deviceName, String.valueOf(value));
+											
+											out.writeObject("OK");
+											System.out.println("[" + user + " Thread] EC: " + deviceName + " -> " + value);
+										} else {
+											out.writeObject("NOD");
+										}
 									}
-									updateGlobalDeviceLog(homeNameEC, deviceName, commandVal);
-									out.writeObject("OK");
-								} else {
-									out.writeObject("DEVICE_NOT_FOUND");
+								} catch (NumberFormatException e) {
+									out.writeObject("NOK");
 								}
 							}
 							out.flush();
