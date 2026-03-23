@@ -146,7 +146,7 @@ public class SpertaClient {
             switch (server_Response[0]) {
               case "OK" ->{
                 System.out.println("OK, " + server_Response[1] + " (long)." );
-                try(FileOutputStream history = new FileOutputStream("history.txt")) {
+                try(FileOutputStream history = new FileOutputStream(user + "_history.txt")) {
                   int bytesRead;
                   int size = Integer.parseInt(server_Response[1]);
                   byte[] buffer = new byte[1024];
