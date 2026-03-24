@@ -217,23 +217,33 @@ class ServerThread extends Thread {
 							}
 						}
 						case "RH" -> {
-							String homeName = client_Commands[1];
-    						// Se o utilizador escreveu "RH casa disp", o filtro é o 3º argumento
-							String deviceFilter = (client_Commands.length == 3) ? client_Commands[2] : null;
+							String hm = client_Commands[1];
+							String dev = client_Commands[2];
 
-							if (!homeExists(homeName)) {
+							if (!homeExists(hm)) {
 								out.writeObject("NOHM");
-							} else if (!checkOwner(homeName, user) && !verifyUserPermission(homeName, user)) {
+							} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, dev.substring(0,1))) {
 								out.writeObject("NOPERM");
 							} else {
-								ArrayList<String> history = getHistoryCSV(homeName, deviceFilter);
-								if (history.isEmpty()) {
+								// Procurar o ficheiro na subpasta correta 
+								String section = dev.substring(0, 1);
+								File logFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
+
+								if (!logFile.exists()) {
+									out.writeObject("NOD");
+								} else if (logFile.length() == 0) {
 									out.writeObject("NODATA");
 								} else {
-									out.writeObject(history); // Envia a lista de linhas do CSV
+									out.writeObject("OK");
+									out.writeLong(logFile.length()); 
+									
+									// Envia o conteúdo byte a byte (ou via array)
+									byte[] content = Files.readAllBytes(logFile.toPath());
+									out.writeObject(content); 
 								}
 							}
 							out.flush();
+							break;
 						}
 						default -> out.writeObject("NOCOMMAND");
 					}
@@ -560,17 +570,37 @@ class ServerThread extends Thread {
 		return sB.toString();
     }
 
-    private boolean verifyUserPermission(String homeName, String user) {
-    try (Scanner sc = new Scanner(homes)) { // Usa o ficheiro homes.txt que já tens
-        while (sc.hasNextLine()) {
-			String line = sc.nextLine();
-			if (line.startsWith(homeName + ":")) {
-				return line.contains(">" + user + ":") || line.contains("/" + user + ":");
-			}
-        }
-    } catch (IOException e) { return false; }
-    return false;
+	private boolean verifyUserPermission(String homeName, String user) {
+    	return verifyUserPermission(homeName, user, "all");
 	}
+
+    private boolean verifyUserPermission(String homeName, String user, String section) {
+		try (Scanner sc = new Scanner(homes)) {
+			while (sc.hasNextLine()) {
+				String line = sc.nextLine();
+				if (line.startsWith(homeName + ":")) {
+					String[] parts = line.split(">");
+					if (parts.length < 2) return false; 
+
+					String usersPart = parts[1]; 
+					String[] userEntries = usersPart.split("/");
+
+					for (String entry : userEntries) {
+						String[] userData = entry.split(":"); 
+						if (userData[0].equals(user)) {
+							String perms = userData[1];
+							return perms.contains(section) || perms.equals("all") || section.equals("all");
+						}
+					}
+				}
+			}
+		} catch (IOException e) { return false; }
+		return false;
+	}
+
+
+
+
 
 	private void updateGlobalDeviceLog(String homeName, String deviceName, String lastValue) {
 		File globalLog = new File("homes/" + homeName + "/devicesLog.txt");
@@ -594,24 +624,4 @@ class ServerThread extends Thread {
 		}
 	}
 
-	private ArrayList<String> getHistoryCSV(String homeName, String deviceFilter) {
-    ArrayList<String> entries = new ArrayList<>();
-    File historyFile = new File(homesFolder, homeName + "/history.txt");
-
-    if (!historyFile.exists()) return entries;
-
-    try (Scanner scanner = new Scanner(historyFile)) {
-        while (scanner.hasNextLine()) {
-            String line = scanner.nextLine();
-            String[] columns = line.split(","); // Divide o CSV pelas vírgulas
-            // columns[2] é o dispositivo. Se não houver filtro OU se o dispositivo coincidir:
-            if (deviceFilter == null || (columns.length > 2 && columns[2].equals(deviceFilter))) {
-                entries.add(line);
-            }
-        }
-    } catch (IOException e) {
-        System.err.println("Erro ao ler o histórico CSV.");
-    }
-    return entries;
-	}
 }
