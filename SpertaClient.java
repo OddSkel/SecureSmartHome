@@ -174,25 +174,36 @@ public class SpertaClient {
             }
           }
 					case "RH" -> {
-            if (command_Args.length != 3) {
-                System.out.println("Uso: RH <casa> <dispositivo>");
-            } else {
-                outStream.writeObject(command_Args);
-                outStream.flush();
-                
-                Object response = inStream.readObject(); 
+              if (command_Args.length != 3) {
+        System.out.println("Usage: RH <hm> <d>");
+    } else {
+        outStream.writeObject(command_Args);
+        outStream.flush();
 
-                if ("OK".equals(response)) {
-                    long size = inStream.readLong();
-                    byte[] content = (byte[]) inStream.readObject(); 
-                    
-                    System.out.println("--- Histórico do Dispositivo " + command_Args[2] + " ---");
-                    System.out.println(new String(content));
-                } else {
-                    System.out.println("Servidor: " + response);
+        String response = (String) inStream.readObject();
+
+        if (response.equals("OK")) {
+            long fileSize = inStream.readLong();
+
+            String fileName = command_Args[1] + "_" + command_Args[2] + ".csv";
+            try (FileOutputStream fos = new FileOutputStream(fileName)) {
+                byte[] buffer = new byte[1024];
+                long remaining = fileSize;
+                int bytesRead;
+                while (remaining > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(buffer.length, remaining))) != -1) {
+                    fos.write(buffer, 0, bytesRead);
+                    remaining -= bytesRead;
                 }
+                System.out.println("OK # Ficheiro " + fileName + " recebido com sucesso.");
+            } catch (IOException e) {
+                System.err.println("Erro ao gravar ficheiro: " + e.getMessage());
             }
-            
+        } else {
+            // Trata NOHM, NOD, NOPERM, NODATA
+            System.out.println(response + " # erro no servidor");
+        }
+    }
+    break;
           }
 					default -> {
             outStream.writeObject(command_Args);

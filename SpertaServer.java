@@ -219,31 +219,28 @@ class ServerThread extends Thread {
 						case "RH" -> {
 							String hm = client_Commands[1];
 							String dev = client_Commands[2];
+							String section = dev.substring(0, 1).toUpperCase(); 
 
 							if (!homeExists(hm)) {
 								out.writeObject("NOHM");
-							} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, dev.substring(0,1))) {
+							} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
 								out.writeObject("NOPERM");
 							} else {
-								// Procurar o ficheiro na subpasta correta 
-								String section = dev.substring(0, 1);
 								File logFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
-
+								
 								if (!logFile.exists()) {
 									out.writeObject("NOD");
-								} else if (logFile.length() == 0) {
-									out.writeObject("NODATA");
 								} else {
-									out.writeObject("OK");
-									out.writeLong(logFile.length()); 
+									// 2. Protocolo de envio de ficheiro conforme o enunciado
+									byte[] fileContent = Files.readAllBytes(logFile.toPath());
 									
-									// Envia o conteúdo byte a byte (ou via array)
-									byte[] content = Files.readAllBytes(logFile.toPath());
-									out.writeObject(content); 
+									out.writeObject("OK");
+									out.writeLong((long) fileContent.length); // Envia o tamanho (LONG)
+									out.write(fileContent);                   // Envia o conteúdo
+									System.out.println("[" + user + " Thread] RH: Sent " + fileContent.length + " bytes for " + dev);
 								}
 							}
 							out.flush();
-							break;
 						}
 						default -> out.writeObject("NOCOMMAND");
 					}
