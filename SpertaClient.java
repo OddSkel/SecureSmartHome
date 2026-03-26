@@ -4,7 +4,6 @@ import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Scanner;
 
@@ -111,8 +110,8 @@ public class SpertaClient {
               System.out.println("Usage: RD <home> <s>");
               break;
             }
-            if (!Arrays.asList(PERMS).contains(command_Args[2])) {
-              System.out.println("Device doesn't exist. Devices available: " + Arrays.toString(PERMS));
+            if (!Arrays.asList(Arrays.copyOfRange(PERMS, 1, PERMS.length)).contains(command_Args[2])) {
+              System.out.println("Device doesn't exist. Devices available: " + Arrays.toString(Arrays.copyOfRange(PERMS, 1, PERMS.length)));
               break;
             }
             outStream.writeObject(command_Args);
@@ -154,11 +153,11 @@ public class SpertaClient {
             switch (server_Response[0]) {
               case "OK" ->{
                 System.out.println("OK, " + server_Response[1] + " (long)." );
-                try(FileOutputStream history = new FileOutputStream(user + "_history.txt")) {
+                try(FileOutputStream history = new FileOutputStream(command_Args[1] + "_history.txt")) {
                   int bytesRead;
-                  int size = Integer.parseInt(server_Response[1]);
+                  long size = Long.parseLong(server_Response[1]);
                   byte[] buffer = new byte[1024];
-                  while(size > 0 && (bytesRead = inStream.read(buffer, 0, Math.min(size, buffer.length))) != -1) {
+                  while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
                     history.write(buffer, 0, bytesRead);
                     size -= bytesRead;
                   }
@@ -175,47 +174,46 @@ public class SpertaClient {
           }
 					case "RH" -> {
               if (command_Args.length != 3) {
-        System.out.println("Usage: RH <hm> <d>");
-    } else {
-        outStream.writeObject(command_Args);
-        outStream.flush();
+                System.out.println("Usage: RH <hm> <d>");
+              } else {
+                  outStream.writeObject(command_Args);
+                  outStream.flush();
 
-        String response = (String) inStream.readObject();
+                  String response = (String) inStream.readObject();
 
-        if (response.equals("OK")) {
-            long fileSize = inStream.readLong();
+                  if (response.equals("OK")) {
+                      long fileSize = inStream.readLong();
 
-            String fileName = command_Args[1] + "_" + command_Args[2] + ".csv";
-            try (FileOutputStream fos = new FileOutputStream(fileName)) {
-                byte[] buffer = new byte[1024];
-                long remaining = fileSize;
-                int bytesRead;
-                while (remaining > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(buffer.length, remaining))) != -1) {
-                    fos.write(buffer, 0, bytesRead);
-                    remaining -= bytesRead;
-                }
-                System.out.println("OK # Ficheiro " + fileName + " recebido com sucesso.");
-            } catch (IOException e) {
-                System.err.println("Erro ao gravar ficheiro: " + e.getMessage());
-            }
-        } else {
-            // Trata NOHM, NOD, NOPERM, NODATA
-            System.out.println(response + " # erro no servidor");
-        }
-    }
-    break;
+                      String fileName = command_Args[1] + "_" + command_Args[2] + ".csv";
+                      try (FileOutputStream fos = new FileOutputStream(fileName)) {
+                          byte[] buffer = new byte[1024];
+                          long remaining = fileSize;
+                          int bytesRead;
+                          while (remaining > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min((long) buffer.length, remaining))) != -1) {
+                              fos.write(buffer, 0, bytesRead);
+                              remaining -= bytesRead;
+                          }
+                          System.out.println("OK # Ficheiro " + fileName + " recebido com sucesso.");
+                      } catch (IOException e) {
+                          System.err.println("Erro ao gravar ficheiro: " + e.getMessage());
+                      }
+                  } else {
+                      // Trata NOHM, NOD, NOPERM, NODATA
+                      System.out.println(response + " # erro no servidor");
+                  }
+              }
           }
 					default -> {
             outStream.writeObject(command_Args);
             String server_Response = (String) inStream.readObject();
-            System.out.println(server_Response + "Commands Available: CREATE, ADD, RD, EC, RT, RH");
+            System.out.println(server_Response + " Commands Available: CREATE, ADD, RD, EC, RT, RH");
           }
 				}
 			}
 		} catch (IOException | ClassNotFoundException e) {
       System.err.println(e.getMessage());
       System.exit(-1);
-		}
+    }
 	}
 
   private void checkSResp(ObjectInput in, ObjectOutputStream out, Scanner sc) {

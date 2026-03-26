@@ -15,8 +15,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.concurrent.Semaphore;
+
 
 public class SpertaServer {
+	private static final int MAX_CLIENTS = 3;
+	private static final Semaphore signal = new Semaphore(MAX_CLIENTS);
+	private static final Semaphore command_signal = new Semaphore(1);
 	public static void main(String[] args) {
     System.out.println("[SERVER] Starting server...");
 		SpertaServer server = new SpertaServer();
@@ -36,12 +41,18 @@ public class SpertaServer {
 			while(true) {
 				try {
 					Socket inSoc = sSoc.accept();
-					ServerThread newServerThread = new ServerThread(inSoc);
+					signal.acquire();
+					ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal);
 					newServerThread.start();
 				} catch (IOException e) {
 					System.err.println(e.getMessage());
 					System.exit(-1);
+				} catch (InterruptedException e1) {
+					Thread.currentThread().interrupt();
+					System.err.println(e1.getMessage());
+					System.exit(-1);
 				}
+			
 			}
 		} catch (IOException e) {
 			System.err.println(e.getMessage());
@@ -52,6 +63,8 @@ public class SpertaServer {
 
 class ServerThread extends Thread {
 	private Socket socket = null;
+	private Semaphore signal = null;
+	private Semaphore command = null;
 
 	private File users, homes, homesFolder;
 	private String user, pwd;
@@ -60,8 +73,10 @@ class ServerThread extends Thread {
 
 	private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
 
-	ServerThread(Socket inSoc) {
+	ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal) {
 		socket = inSoc;
+		this.signal = signal;
+		command = command_signal;
 		System.out.println("thread do server para cada cliente");
 	}
 
@@ -93,164 +108,176 @@ class ServerThread extends Thread {
 				authenticate(user, pwd);
 				while(true){
 					String [] client_Commands = (String[]) in.readObject();
-					switch (client_Commands[0]) {
-						case "CREATE" -> {
-							String houseName = client_Commands[1];
-							System.out.println("["+ user +" Thread] CREATE command received for home: " + houseName);
-							createHome(houseName);
-						}
-						case "ADD" -> {
-							String userToAdd = client_Commands[1];
-							String homeName = client_Commands[2];
-							String section = client_Commands[3];
-							System.out.println("["+ user +" Thread] ADD command received to add user: " + userToAdd + " to home: " + homeName + " with section: " + section);
-							if(userExists(userToAdd)) {
-								if(homeExists(homeName)){
-									if(checkOwner(homeName, user)) {
-										if(checkOwner(homeName, userToAdd)){
-											out.writeObject("USER_ADDING_SELF");
-											out.flush();
-											System.out.println("["+ user +" Thread] ADD command failed. User cannot add itself to home: " + homeName);
-										} else{
-											if(!isValidSection(section)) {
-											out.writeObject("INVALID_SECTION");
-											out.flush();
-											System.out.println("["+ user +" Thread] ADD command failed. Invalid section: " + section);
-											}else{
-												addUserToHome(userToAdd, homeName, section);
+					command.acquire();
+					try {
+						switch (client_Commands[0]) {
+							case "CREATE" -> {
+								String houseName = client_Commands[1];
+								System.out.println("["+ user +" Thread] CREATE command received for home: " + houseName);
+								createHome(houseName);
+							}
+							case "ADD" -> {
+								String userToAdd = client_Commands[1];
+								String homeName = client_Commands[2];
+								String section = client_Commands[3];
+								System.out.println("["+ user +" Thread] ADD command received to add user: " + userToAdd + " to home: " + homeName + " with section: " + section);
+								if(userExists(userToAdd)) {
+									if(homeExists(homeName)){
+										if(checkOwner(homeName, user)) {
+											if(checkOwner(homeName, userToAdd)){
+												out.writeObject("USER_ADDING_SELF");
+												out.flush();
+												System.out.println("["+ user +" Thread] ADD command failed. User cannot add itself to home: " + homeName);
+											} else{
+												if(!isValidSection(section)) {
+												out.writeObject("INVALID_SECTION");
+												out.flush();
+												System.out.println("["+ user +" Thread] ADD command failed. Invalid section: " + section);
+												}else{
+													addUserToHome(userToAdd, homeName, section);
+												}
 											}
+										} else {
+											out.writeObject("NO_USER_PERMS");
+											out.flush();
+											System.out.println("["+ user +" Thread] ADD command failed. User does not have permissions to add users to home: " + homeName);
 										}
 									} else {
-										out.writeObject("NO_USER_PERMS");
-										out.flush();
-										System.out.println("["+ user +" Thread] ADD command failed. User does not have permissions to add users to home: " + homeName);
+									out.writeObject("HOME_NOT_FOUND");
+									out.flush();
+									System.out.println("["+ user +" Thread] ADD command failed. Home not found: " + homeName);
 									}
 								} else {
-								out.writeObject("HOME_NOT_FOUND");
-								out.flush();
-								System.out.println("["+ user +" Thread] ADD command failed. Home not found: " + homeName);
-								}
-							} else {
-								out.writeObject("USER_NOT_FOUND");
-								out.flush();
-								System.out.println("["+ user +" Thread] ADD command failed. User not found: " + userToAdd);
-							}
-						}
-						case "RD" -> {
-							int result = verify(client_Commands, user);
-							switch (result) {
-								case 0 -> out.writeObject("NOPERM");
-								case 1 -> out.writeObject("OK");
-								case -1 -> out.writeObject("NOHM");
-								default -> throw new AssertionError();
-							}
-							out.flush();
-						}
-						case "EC" -> {
-							if (client_Commands.length < 4) {
-								out.writeObject("NOK");
-								out.flush();
-								break;
-							}
-
-							String homeNameEC = client_Commands[1]; 
-							String deviceName = client_Commands[2]; 
-							String valStr = client_Commands[3]; 
-
-							if (!homeExists(homeNameEC)) {
-								out.writeObject("NOHM");
-							} 
-							else if (!checkOwner(homeNameEC, user) && !verifyUserPermission(homeNameEC, user)) {
-								out.writeObject("NOPERM");
-							} 
-							else {
-								try {
-									int value = Integer.parseInt(valStr);
-
-									if (value < 0 || value > 600) {
-										out.writeObject("NOK");
-									} else {
-										String division = deviceName.substring(0, 1).toUpperCase(); 
-										File deviceFile = new File("homes/" + homeNameEC + "/" + division + "/" + deviceName + ".txt");
-
-										if (deviceFile.exists()) {
-											try (FileWriter fwDevice = new FileWriter(deviceFile, true)) {
-												fwDevice.write(System.currentTimeMillis() + "," + deviceName + "," + value + System.lineSeparator());
-											}
-											updateGlobalDeviceLog(homeNameEC, deviceName, String.valueOf(value));
-											
-											out.writeObject("OK");
-											System.out.println("[" + user + " Thread] EC: " + deviceName + " -> " + value);
-										} else {
-											out.writeObject("NOD");
-										}
-									}
-								} catch (NumberFormatException e) {
-									out.writeObject("NOK");
+									out.writeObject("USER_NOT_FOUND");
+									out.flush();
+									System.out.println("["+ user +" Thread] ADD command failed. User not found: " + userToAdd);
 								}
 							}
-							out.flush();
-						}
-						case "RT" -> {
-							Number result = getHistory(client_Commands[1], user);
-							if(result instanceof Long) {
-								out.writeObject(new String[]{"OK", Long.toString((long) result)});
-								File f = new File("homes/" + client_Commands[1] + "/recent.txt");
-								try(FileInputStream history_To_Send = new FileInputStream(f)){
-									int bytesToRead;
-									byte [] buf = new byte[1024];
-									while((bytesToRead = history_To_Send.read(buf, 0, buf.length))!= -1){
-										out.write(buf, 0, bytesToRead);
-										out.flush();
-									}
-								}
-								f.delete();
-							}
-							else if(result instanceof Integer) {
-								switch ((int) result) {
-									case 0 -> out.writeObject(new String[]{"NODATA"});
-									case 1 -> out.writeObject(new String[]{"NOPERM"});
-									case -1 -> out.writeObject(new String[]{"NOHM"});
+							case "RD" -> {
+								int result = verify(client_Commands, user);
+								switch (result) {
+									case 0 -> out.writeObject("NOPERM");
+									case 1 -> out.writeObject("OK");
+									case -1 -> out.writeObject("NOHM");
 									default -> throw new AssertionError();
 								}
 								out.flush();
 							}
-						}
-						case "RH" -> {
-							String hm = client_Commands[1];
-							String dev = client_Commands[2];
-							String section = dev.substring(0, 1).toUpperCase(); 
-
-							if (!homeExists(hm)) {
-								out.writeObject("NOHM");
-							} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
-								out.writeObject("NOPERM");
-							} else {
-								File logFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
-								
-								if (!logFile.exists()) {
-									out.writeObject("NOD");
-								} else {
-									// 2. Protocolo de envio de ficheiro conforme o enunciado
-									byte[] fileContent = Files.readAllBytes(logFile.toPath());
-									
-									out.writeObject("OK");
-									out.writeLong((long) fileContent.length); // Envia o tamanho (LONG)
-									out.write(fileContent);                   // Envia o conteúdo
-									System.out.println("[" + user + " Thread] RH: Sent " + fileContent.length + " bytes for " + dev);
+							case "EC" -> {
+								if (client_Commands.length < 4) {
+									out.writeObject("NOK");
+									out.flush();
+									break;
+								}
+	
+								String homeNameEC = client_Commands[1];
+								String deviceName = client_Commands[2];
+								String valStr = client_Commands[3];
+	
+								if (!homeExists(homeNameEC)) {
+									out.writeObject("NOHM");
+								}
+								else if (!checkOwner(homeNameEC, user) && !verifyUserPermission(homeNameEC, user)) {
+									out.writeObject("NOPERM");
+								}
+								else {
+									try {
+										int value = Integer.parseInt(valStr);
+	
+										if (value < 0 || value > 600) {
+											out.writeObject("NOK");
+										} else {
+											String division = deviceName.substring(0, 1).toUpperCase(); 
+											File deviceFile = new File("homes/" + homeNameEC + "/" + division + "/" + deviceName + ".txt");
+	
+											if (deviceFile.exists()) {
+												try (FileWriter fwDevice = new FileWriter(deviceFile, true)) {
+													fwDevice.write(System.currentTimeMillis() + "," + deviceName + "," + value + System.lineSeparator());
+												}
+												updateGlobalDeviceLog(homeNameEC, deviceName, String.valueOf(value));
+												
+												out.writeObject("OK");
+												System.out.println("[" + user + " Thread] EC: " + deviceName + " -> " + value);
+											} else {
+												out.writeObject("NOD");
+											}
+										}
+									} catch (NumberFormatException e) {
+										out.writeObject("NOK");
+									}
+								}
+								out.flush();
+							}
+							case "RT" -> {
+								Number result = getHistory(client_Commands[1], user);
+								if(result instanceof Long) {
+									out.writeObject(new String[]{"OK", Long.toString((long) result)});
+									File f = new File("homes/" + client_Commands[1] + "/recent.txt");
+									try(FileInputStream history_To_Send = new FileInputStream(f)){
+										int bytesToRead;
+										byte [] buf = new byte[1024];
+										while((bytesToRead = history_To_Send.read(buf, 0, buf.length))!= -1){
+											out.write(buf, 0, bytesToRead);
+											out.flush();
+										}
+									}
+									f.delete();
+								}
+								else if(result instanceof Integer) {
+									switch ((int) result) {
+										case 0 -> out.writeObject(new String[]{"NODATA"});
+										case 1 -> out.writeObject(new String[]{"NOPERM"});
+										case -1 -> out.writeObject(new String[]{"NOHM"});
+										default -> throw new AssertionError();
+									}
+									out.flush();
 								}
 							}
-							out.flush();
+							case "RH" -> {
+								String hm = client_Commands[1];
+								String dev = client_Commands[2];
+								String section = dev.substring(0, 1).toUpperCase();
+	
+								if (!homeExists(hm)) {
+									out.writeObject("NOHM");
+								} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
+									out.writeObject("NOPERM");
+								} else {
+									File logFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
+									
+									if (!logFile.exists()) {
+										out.writeObject("NOD");
+									} else {
+										// 2. Protocolo de envio de ficheiro conforme o enunciado
+										byte[] fileContent = Files.readAllBytes(logFile.toPath());
+										
+										out.writeObject("OK");
+										out.writeLong((long) fileContent.length); // Envia o tamanho (LONG)
+										out.write(fileContent);                   // Envia o conteúdo
+										System.out.println("[" + user + " Thread] RH: Sent " + fileContent.length + " bytes for " + dev);
+									}
+								}
+								out.flush();
+							}
+							default -> out.writeObject("NOCOMMAND");
 						}
-						default -> out.writeObject("NOCOMMAND");
+						
+					} finally {
+						command.release();
 					}
 				}
 			} catch (ClassNotFoundException e1) {
 				System.err.println(e1.getMessage());
 				System.exit(-1);
+			} catch (InterruptedException e) {
+				System.err.println(e.getMessage());
+				Thread.currentThread().interrupt();
 			}
 		} catch (IOException ex) {
 			System.out.println("Client disconnected!");
+		} finally {
+			signal.release();
+			try { socket.close(); } catch (IOException ignored) {}
 		}
 	}
 
@@ -568,7 +595,7 @@ class ServerThread extends Thread {
     }
 
 	private boolean verifyUserPermission(String homeName, String user) {
-    	return verifyUserPermission(homeName, user, "all");
+		return verifyUserPermission(homeName, user, "all");
 	}
 
     private boolean verifyUserPermission(String homeName, String user, String section) {
@@ -577,13 +604,13 @@ class ServerThread extends Thread {
 				String line = sc.nextLine();
 				if (line.startsWith(homeName + ":")) {
 					String[] parts = line.split(">");
-					if (parts.length < 2) return false; 
+					if (parts.length < 2) return false;
 
-					String usersPart = parts[1]; 
+					String usersPart = parts[1];
 					String[] userEntries = usersPart.split("/");
 
 					for (String entry : userEntries) {
-						String[] userData = entry.split(":"); 
+						String[] userData = entry.split(":");
 						if (userData[0].equals(user)) {
 							String perms = userData[1];
 							return perms.contains(section) || perms.equals("all") || section.equals("all");
