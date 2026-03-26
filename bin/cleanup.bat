@@ -8,6 +8,7 @@ echo Cleaning project...
 
 for /r %%f in (*.class) do del "%%f"
 for /r %%f in (*.txt) do del "%%f"
+for /r %%f in (*.csv) do del "%%f"
 
 if exist "homes" (
     rd /s /q "homes"

@@ -12,6 +12,9 @@ find . -name "*.class" -delete
 # Remove all .txt files recursively
 find . -name "*.txt" -delete
 
+# Remove all .csv files recursivel
+find . -name "*.csv" -delete
+
 # Remove the homes folder and everything inside
 if [ -d "homes" ]; then
     rm -rf "homes"
