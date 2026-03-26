@@ -90,6 +90,10 @@ public class SpertaClient {
             }
           }
 					case "ADD" -> {
+            if (!Arrays.asList(PERMS).contains(command_Args[2])) {
+              System.out.println("Device doesn't exist. Devices available: " + Arrays.toString(PERMS));
+              break;
+            }
             if (command_Args.length != 4) {
               System.out.println("Usage: ADD <user> <home> <secção>");
             } else {
