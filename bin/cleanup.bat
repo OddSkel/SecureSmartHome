@@ -1,15 +1,14 @@
 @echo off
 REM cleanup.bat
 
+REM Change to the parent of the folder where this .bat lives
+cd /d "%~dp0.."
+
 echo Cleaning project...
 
-REM Remove all .class files recursively
 for /r %%f in (*.class) do del "%%f"
-
-REM Remove all .txt files recursively
 for /r %%f in (*.txt) do del "%%f"
 
-REM Remove the homes folder and everything inside
 if exist "homes" (
     rd /s /q "homes"
 )
