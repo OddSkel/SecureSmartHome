@@ -141,8 +141,8 @@ public class SpertaClient {
                     case "NOK" -> System.out.println("NOK # valor inválido");
                     case "NOHM" -> System.out.println("NOHM # esta casa não existe");
                     case "NOD" -> System.out.println("NOD # este dispositivo não existe");
-                    case "NOPERM" -> System.out.println("NOPERM # sem permissões para este dispositivo");
-                    default -> System.out.println("Servidor: " + response);
+                    case "NOPERM" -> System.out.println("NOPERM # sem permissões ");
+                    default -> System.out.println("Resposta inesperada: " + response);
                 }
             }
           }
@@ -182,12 +182,13 @@ public class SpertaClient {
               } else {
                   outStream.writeObject(command_Args);
                   outStream.flush();
-
-                  String response = (String) inStream.readObject();
+                  
+                  Object responseObj = inStream.readObject();
+                  String response = (String) responseObj;
 
                   if (response.equals("OK")) {
                       long fileSize = inStream.readLong();
-
+                      System.out.println("OK, " + fileSize + " (long), seguido de " + fileSize + " bytes de dados.");
                       String fileName = command_Args[1] + "_" + command_Args[2] + ".csv";
                       try (FileOutputStream fos = new FileOutputStream(fileName)) {
                           byte[] buffer = new byte[1024];
@@ -197,16 +198,18 @@ public class SpertaClient {
                               fos.write(buffer, 0, bytesRead);
                               remaining -= bytesRead;
                           }
-                          System.out.println("OK # Ficheiro " + fileName + " recebido com sucesso.");
-                      } catch (IOException e) {
-                          System.err.println("Erro ao gravar ficheiro: " + e.getMessage());
                       }
                   } else {
-                      // Trata NOHM, NOD, NOPERM, NODATA
-                      System.out.println(response + " # erro no servidor");
+                      switch (response) {
+                        case "NOHM" -> System.out.println("NOHM # esta casa não existe");
+                        case "NOD" -> System.out.println("NOD # dispositivo não existe");
+                        case "NOPERM" -> System.out.println("NOPERM # sem permissões");
+                        case "NODATA" -> System.out.println("NODATA # sem dados");
+                        default -> System.out.println(response);
+                      }
                   }
               }
-          }
+            }
 					default -> {
             outStream.writeObject(command_Args);
             String server_Response = (String) inStream.readObject();

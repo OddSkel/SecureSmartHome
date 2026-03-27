@@ -184,9 +184,13 @@ class ServerThread extends Thread {
 									try {
 										int value = Integer.parseInt(valStr);
 	
-										if (value < 0 || value > 600) {
+										if (value < 0 ) {
 											out.writeObject("NOK");
 										} else {
+											if (value > 600) {
+												value = 600; 
+											}
+
 											String division = deviceName.substring(0, 1).toUpperCase(); 
 											File deviceFile = new File("homes/" + homeNameEC + "/" + division + "/" + deviceName + ".txt");
 	
@@ -247,8 +251,8 @@ class ServerThread extends Thread {
 									
 									if (!logFile.exists()) {
 										out.writeObject("NOD");
-									} else {
-										// 2. Protocolo de envio de ficheiro conforme o enunciado
+									} else if (logFile.length() == 0){out.writeObject("NODATA");}
+									else{
 										byte[] fileContent = Files.readAllBytes(logFile.toPath());
 										
 										out.writeObject("OK");
