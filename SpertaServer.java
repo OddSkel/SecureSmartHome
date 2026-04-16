@@ -10,7 +10,9 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,13 +43,29 @@ public class SpertaServer {
 			while(true) {
 				try {
 					Socket inSoc = sSoc.accept();
+					SecureRandom secure_random = new SecureRandom();
+					ObjectOutputStream check = new ObjectOutputStream(inSoc.getOutputStream());
+					ObjectInputStream rec = new ObjectInputStream(inSoc.getInputStream());
+					byte[] nounce = new byte[8];
+					secure_random.nextBytes(nounce);
+					check.writeObject(nounce);
+					check.flush();
+					byte [] receive = (byte[]) rec.readObject();
+					if (!Arrays.equals(nounce, receive)) {
+						check.writeObject("NOK-ATTEST");
+						check.flush();
+						inSoc.close();
+						return;
+					}
+					check.writeObject("OK-ATTEST");
+					check.flush();
 					signal.acquire();
-					ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal);
+					ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check, rec);
 					newServerThread.start();
 				} catch (IOException e) {
 					System.err.println(e.getMessage());
 					System.exit(-1);
-				} catch (InterruptedException e1) {
+				} catch (InterruptedException | ClassNotFoundException e1) {
 					Thread.currentThread().interrupt();
 					System.err.println(e1.getMessage());
 					System.exit(-1);
@@ -68,23 +86,23 @@ class ServerThread extends Thread {
 
 	private File users, homes, homesFolder;
 	private String user, pwd;
-	private ObjectInputStream in;
-	private ObjectOutputStream out;
+	private final ObjectInputStream in;
+	private final ObjectOutputStream out;
 
 	private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
 
-	ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal) {
+	ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal, ObjectOutputStream out, ObjectInputStream in) {
 		socket = inSoc;
 		this.signal = signal;
 		command = command_signal;
+		this.out = out;
+		this.in = in;
 		System.out.println("thread do server para cada cliente");
 	}
 
 	@Override
 	public void run() {
 		try{
-			out = new ObjectOutputStream(socket.getOutputStream());
-			in = new ObjectInputStream(socket.getInputStream());
 
 			users = new File("usersLog.txt");
 			if (!users.exists()) {

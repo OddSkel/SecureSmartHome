@@ -51,173 +51,184 @@ public class SpertaClient {
 
   public void startClient(){
     try(Socket cliSoc = new Socket(host, port);
-        ObjectInputStream inStream = new ObjectInputStream(cliSoc.getInputStream());
         ObjectOutputStream outStream = new ObjectOutputStream(cliSoc.getOutputStream());
+        ObjectInputStream inStream = new ObjectInputStream(cliSoc.getInputStream());
         Scanner user_input = new Scanner(System.in)) {
-
-      outStream.writeObject(user);
-      outStream.writeObject(pwd);
-      outStream.flush();
-      checkSResp(inStream, outStream, user_input);
-      
-			while(true) {
-        System.out.print(COMMAND_LIST + "\n" + "Insert Command: ");
-
-        //Garante que lemos a linha toda (comando + argumentos)
-        String user_Command = "";
-        if (user_input.hasNextLine()) {
-          user_Command = user_input.nextLine();
-        }
-        //nao tirar isto
-        //Limpeza técnica: se a linha vier vazia (comum após ler números anteriormente), tenta ler a próxima
-        if (user_Command.isEmpty() && user_input.hasNextLine()) {
-          user_Command = user_input.nextLine();
-        }
-
-        //Divide a string por espaços para obter os argumentos
-        String[] command_Args = user_Command.split(" ");
-
-				switch (command_Args[0]) {
-					case "CREATE" -> {
-            if (command_Args.length != 2) {
-              System.out.println("Usage: CREATE <home_name>");
-            }else {
-              outStream.writeObject(command_Args);
-              outStream.flush();
-              String server_Response = (String) inStream.readObject();
-              String response = server_Response.equals("HOME_CREATED") ? "OK" : "NOK";
-              System.out.println(response);
+        
+        byte [] nounce_rec = (byte[]) inStream.readObject();
+        byte [] res = nounce_rec;
+        outStream.writeObject(res);
+        outStream.flush();
+        String integrity_check = (String) inStream.readObject();
+        if (integrity_check.equals("OK-ATTEST")) {
+          outStream.writeObject(user);
+          outStream.writeObject(pwd);
+          outStream.flush();
+          checkSResp(inStream, outStream, user_input);
+          
+          while(true) {
+            System.out.print(COMMAND_LIST + "\n" + "Insert Command: ");
+    
+            //Garante que lemos a linha toda (comando + argumentos)
+            String user_Command = "";
+            if (user_input.hasNextLine()) {
+              user_Command = user_input.nextLine();
             }
-          }
-					case "ADD" -> {
-            if (!Arrays.asList(PERMS).contains(command_Args[2])) {
-              System.out.println("Device doesn't exist. Devices available: " + Arrays.toString(PERMS));
-              break;
+            //nao tirar isto
+            //Limpeza técnica: se a linha vier vazia (comum após ler números anteriormente), tenta ler a próxima
+            if (user_Command.isEmpty() && user_input.hasNextLine()) {
+              user_Command = user_input.nextLine();
             }
-            if (command_Args.length != 4) {
-              System.out.println("Usage: ADD <user> <home> <secção>");
-            } else {
-              outStream.writeObject(command_Args);
-              outStream.flush();
-              String server_Response = (String) inStream.readObject();
-              switch (server_Response) {
-                  case "USER_ADDED" -> System.out.println("OK");
-                  case "USER_NOT_FOUND" -> System.out.println("NOUSER");
-                  case "HOME_NOT_FOUND" -> System.out.println("NOHM");
-                  case "NO_USER_PERMS" -> System.out.println("NOPERM");
-                  default -> System.out.println("NOK");
-              }
-            }
-          }
-					case "RD" -> {
-            if (command_Args.length != 3) {
-              System.out.println("Usage: RD <home> <s>");
-              break;
-            }
-            if (!Arrays.asList(Arrays.copyOfRange(PERMS, 1, PERMS.length)).contains(command_Args[2])) {
-              System.out.println("Device doesn't exist. Devices available: " + Arrays.toString(Arrays.copyOfRange(PERMS, 1, PERMS.length)));
-              break;
-            }
-            outStream.writeObject(command_Args);
-            outStream.flush();
-            String server_Response = (String) inStream.readObject();
-            switch (server_Response) {
-                case "OK"-> System.out.println("OK");
-                case "NOPERM" -> System.out.println("NOPERM # no permissions");
-                case "NOHM" -> System.out.println("NOHM # no such house");
-                default -> throw new AssertionError();
-            }
-          }
-					case "EC" -> {
-            if (command_Args.length != 4) {
-                System.out.println("Erro: Use EC <casa> <dispositivo> <valor>");
-            } else {
-                outStream.writeObject(command_Args);
-                outStream.flush();
-                String response = (String) inStream.readObject();
-
-                switch (response) {
-                    case "OK" -> System.out.println("OK");
-                    case "NOK" -> System.out.println("NOK # valor inválido");
-                    case "NOHM" -> System.out.println("NOHM # esta casa não existe");
-                    case "NOD" -> System.out.println("NOD # este dispositivo não existe");
-                    case "NOPERM" -> System.out.println("NOPERM # sem permissões ");
-                    default -> System.out.println("Resposta inesperada: " + response);
-                }
-            }
-          }
-					case "RT" -> {
-            if (command_Args.length != 2) {
-              System.out.println("Usage: RT <home>");
-              break;
-            }
-            outStream.writeObject(command_Args);
-            outStream.flush();
-            String [] server_Response = (String []) inStream.readObject();
-            switch (server_Response[0]) {
-              case "OK" ->{
-                System.out.println("OK, " + server_Response[1] + " (long)." );
-                try(FileOutputStream history = new FileOutputStream(command_Args[1] + "_history.txt")) {
-                  int bytesRead;
-                  long size = Long.parseLong(server_Response[1]);
-                  byte[] buffer = new byte[1024];
-                  while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
-                    history.write(buffer, 0, bytesRead);
-                    size -= bytesRead;
-                  }
-                } catch (IOException e) {
-                  System.err.println(e.getMessage());
-                  System.exit(-1);
-                }
-              }
-              case "NODATA" -> System.out.println("NODATA # No data to send.");
-              case "NOHM" -> System.out.println("NOHM # " + command_Args[1] + " doesn't exist.");
-              case "NOPERM" -> System.out.println("NOPERM # no permissions");
-              default -> throw new AssertionError();
-            }
-          }
-					case "RH" -> {
-              if (command_Args.length != 3) {
-                System.out.println("Usage: RH <hm> <d>");
-              } else {
+    
+            //Divide a string por espaços para obter os argumentos
+            String[] command_Args = user_Command.split(" ");
+    
+            switch (command_Args[0]) {
+              case "CREATE" -> {
+                if (command_Args.length != 2) {
+                  System.out.println("Usage: CREATE <home_name>");
+                }else {
                   outStream.writeObject(command_Args);
                   outStream.flush();
-                  
-                  Object responseObj = inStream.readObject();
-                  String response = (String) responseObj;
-
-                  if (response.equals("OK")) {
-                      long fileSize = inStream.readLong();
-                      System.out.println("OK, " + fileSize + " (long), seguido de " + fileSize + " bytes de dados.");
-                      String fileName = command_Args[1] + "_" + command_Args[2] + ".csv";
-                      try (FileOutputStream fos = new FileOutputStream(fileName)) {
-                          byte[] buffer = new byte[1024];
-                          long remaining = fileSize;
-                          int bytesRead;
-                          while (remaining > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min((long) buffer.length, remaining))) != -1) {
-                              fos.write(buffer, 0, bytesRead);
-                              remaining -= bytesRead;
+                  String server_Response = (String) inStream.readObject();
+                  String response = server_Response.equals("HOME_CREATED") ? "OK" : "NOK";
+                  System.out.println(response);
+                }
+              }
+              case "ADD" -> {
+                if (!Arrays.asList(PERMS).contains(command_Args[3])) {
+                  System.out.println("Device doesn't exist. Devices available: " + Arrays.toString(PERMS));
+                  break;
+                }
+                if (command_Args.length != 4) {
+                  System.out.println("Usage: ADD <user> <home> <secção>");
+                } else {
+                  outStream.writeObject(command_Args);
+                  outStream.flush();
+                  String server_Response = (String) inStream.readObject();
+                  switch (server_Response) {
+                      case "USER_ADDED" -> System.out.println("OK");
+                      case "USER_NOT_FOUND" -> System.out.println("NOUSER");
+                      case "HOME_NOT_FOUND" -> System.out.println("NOHM");
+                      case "NO_USER_PERMS" -> System.out.println("NOPERM");
+                      default -> System.out.println("NOK");
+                  }
+                }
+              }
+              case "RD" -> {
+                if (command_Args.length != 3) {
+                  System.out.println("Usage: RD <home> <s>");
+                  break;
+                }
+                if (!Arrays.asList(Arrays.copyOfRange(PERMS, 1, PERMS.length)).contains(command_Args[2])) {
+                  System.out.println("Device doesn't exist. Devices available: " + Arrays.toString(Arrays.copyOfRange(PERMS, 1, PERMS.length)));
+                  break;
+                }
+                outStream.writeObject(command_Args);
+                outStream.flush();
+                String server_Response = (String) inStream.readObject();
+                switch (server_Response) {
+                    case "OK"-> System.out.println("OK");
+                    case "NOPERM" -> System.out.println("NOPERM # no permissions");
+                    case "NOHM" -> System.out.println("NOHM # no such house");
+                    default -> throw new AssertionError();
+                }
+              }
+              case "EC" -> {
+                if (command_Args.length != 4) {
+                    System.out.println("Erro: Use EC <casa> <dispositivo> <valor>");
+                } else {
+                    outStream.writeObject(command_Args);
+                    outStream.flush();
+                    String response = (String) inStream.readObject();
+    
+                    switch (response) {
+                        case "OK" -> System.out.println("OK");
+                        case "NOK" -> System.out.println("NOK # valor inválido");
+                        case "NOHM" -> System.out.println("NOHM # esta casa não existe");
+                        case "NOD" -> System.out.println("NOD # este dispositivo não existe");
+                        case "NOPERM" -> System.out.println("NOPERM # sem permissões ");
+                        default -> System.out.println("Resposta inesperada: " + response);
+                    }
+                }
+              }
+              case "RT" -> {
+                if (command_Args.length != 2) {
+                  System.out.println("Usage: RT <home>");
+                  break;
+                }
+                outStream.writeObject(command_Args);
+                outStream.flush();
+                String [] server_Response = (String []) inStream.readObject();
+                switch (server_Response[0]) {
+                  case "OK" ->{
+                    System.out.println("OK, " + server_Response[1] + " (long)." );
+                    try(FileOutputStream history = new FileOutputStream(command_Args[1] + "_history.txt")) {
+                      int bytesRead;
+                      long size = Long.parseLong(server_Response[1]);
+                      byte[] buffer = new byte[1024];
+                      while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
+                        history.write(buffer, 0, bytesRead);
+                        size -= bytesRead;
+                      }
+                    } catch (IOException e) {
+                      System.err.println(e.getMessage());
+                      System.exit(-1);
+                    }
+                  }
+                  case "NODATA" -> System.out.println("NODATA # No data to send.");
+                  case "NOHM" -> System.out.println("NOHM # " + command_Args[1] + " doesn't exist.");
+                  case "NOPERM" -> System.out.println("NOPERM # no permissions");
+                  default -> throw new AssertionError();
+                }
+              }
+              case "RH" -> {
+                  if (command_Args.length != 3) {
+                    System.out.println("Usage: RH <hm> <d>");
+                  } else {
+                      outStream.writeObject(command_Args);
+                      outStream.flush();
+                      
+                      Object responseObj = inStream.readObject();
+                      String response = (String) responseObj;
+    
+                      if (response.equals("OK")) {
+                          long fileSize = inStream.readLong();
+                          System.out.println("OK, " + fileSize + " (long), seguido de " + fileSize + " bytes de dados.");
+                          String fileName = command_Args[1] + "_" + command_Args[2] + ".csv";
+                          try (FileOutputStream fos = new FileOutputStream(fileName)) {
+                              byte[] buffer = new byte[1024];
+                              long remaining = fileSize;
+                              int bytesRead;
+                              while (remaining > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min((long) buffer.length, remaining))) != -1) {
+                                  fos.write(buffer, 0, bytesRead);
+                                  remaining -= bytesRead;
+                              }
+                          }
+                      } else {
+                          switch (response) {
+                            case "NOHM" -> System.out.println("NOHM # esta casa não existe");
+                            case "NOD" -> System.out.println("NOD # dispositivo não existe");
+                            case "NOPERM" -> System.out.println("NOPERM # sem permissões");
+                            case "NODATA" -> System.out.println("NODATA # sem dados");
+                            default -> System.out.println(response);
                           }
                       }
-                  } else {
-                      switch (response) {
-                        case "NOHM" -> System.out.println("NOHM # esta casa não existe");
-                        case "NOD" -> System.out.println("NOD # dispositivo não existe");
-                        case "NOPERM" -> System.out.println("NOPERM # sem permissões");
-                        case "NODATA" -> System.out.println("NODATA # sem dados");
-                        default -> System.out.println(response);
-                      }
                   }
+                }
+              default -> {
+                outStream.writeObject(command_Args);
+                String server_Response = (String) inStream.readObject();
+                System.out.println(server_Response + " Commands Available: CREATE, ADD, RD, EC, RT, RH");
               }
             }
-					default -> {
-            outStream.writeObject(command_Args);
-            String server_Response = (String) inStream.readObject();
-            System.out.println(server_Response + " Commands Available: CREATE, ADD, RD, EC, RT, RH");
           }
-				}
-			}
-		} catch (IOException | ClassNotFoundException e) {
+        }
+        else{
+          System.out.println("INTEGRITY VIOLATION. EXITING...");
+          System.exit(-1);
+        }
+      } catch (IOException | ClassNotFoundException e) {
       System.err.println(e.getMessage());
       System.exit(-1);
     }
