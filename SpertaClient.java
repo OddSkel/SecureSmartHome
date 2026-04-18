@@ -10,7 +10,6 @@ import java.nio.file.Files;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.util.Arrays;
@@ -300,10 +299,4 @@ public class SpertaClient {
       System.err.println(e.getMessage());
     }
   }
-
-  private byte[] generateSalt() {
-        byte[] saltBytes = new byte[16];
-        new SecureRandom().nextBytes(saltBytes);
-        return saltBytes;
-    }
 }
