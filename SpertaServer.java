@@ -10,14 +10,32 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.InvalidKeyException;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.PublicKey;
 import java.security.SecureRandom;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.KeySpec;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.Semaphore;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
+import javax.crypto.spec.SecretKeySpec;
 
 
 public class SpertaServer {
@@ -85,7 +103,7 @@ class ServerThread extends Thread {
 	private Semaphore command = null;
 
 	private File users, homes, homesFolder;
-	private String user, pwd;
+	private String user, pwd, trustore, pass_truststore, keystore, pass_keystore;
 	private final ObjectInputStream in;
 	private final ObjectOutputStream out;
 
@@ -120,10 +138,16 @@ class ServerThread extends Thread {
 			}
 	
 			try {
+				//Maybe delete some things that client sends to user
+				trustore = (String) in.readObject();
+				pass_truststore = (String) in.readObject();
+				keystore = (String) in.readObject();
+				pass_keystore = (String) in.readObject();
 				user = (String) in.readObject();
 				pwd = (String) in.readObject();
+				String [] client_args = {trustore, pass_truststore, keystore, pass_keystore, user, pwd};
 				System.out.println("["+ user +" Thread] Authentication request received for user: " + user);
-				authenticate(user, pwd);
+				authenticate(client_args);
 				while(true){
 					String [] client_Commands = (String[]) in.readObject();
 					command.acquire();
@@ -133,6 +157,40 @@ class ServerThread extends Thread {
 								String houseName = client_Commands[1];
 								System.out.println("["+ user +" Thread] CREATE command received for home: " + houseName);
 								createHome(houseName);
+								try {
+									for (String section : Arrays.asList(Arrays.copyOfRange(PERMS, 1, PERMS.length))) {
+										//Generate keys
+										SecretKey newkey;
+										SecretKeyFactory factory = SecretKeyFactory.getInstance("PBEWithHmacSHA256AndAES_128");
+										KeySpec spec = new PBEKeySpec(pwd.toCharArray(), generateSalt(), 20);
+										SecretKey tmp = factory.generateSecret(spec);
+										byte[] keyBytes = tmp.getEncoded();
+										byte[] aesKeyBytes = Arrays.copyOf(keyBytes, 16);
+										newkey = new SecretKeySpec(aesKeyBytes, "AES");
+
+										//Get Certificate
+										File kS = new File("Keys", keystore);
+										FileInputStream kfile = new FileInputStream(kS);
+										KeyStore kstore = KeyStore.getInstance("JCEKS");
+										kstore.load(kfile, pass_keystore.toCharArray());
+										Certificate cert = kstore.getCertificate("keyrsa");
+
+										//Get PK and cipher with it
+										PublicKey pk = cert.getPublicKey();
+										Cipher c = Cipher.getInstance("RSA");
+										c.init(Cipher.WRAP_MODE, pk);
+										byte[] wrappedKey = c.wrap(newkey);
+
+										//Create key file
+										File keyFile = new File("homes/" + houseName + "/" + section, "key." + houseName + "." + section + "." + user);
+										try(FileOutputStream keySection = new FileOutputStream(keyFile)){
+											keySection.write(wrappedKey);
+										}
+									}
+								} catch (IOException | InvalidKeyException | KeyStoreException | NoSuchAlgorithmException | CertificateException | InvalidKeySpecException | IllegalBlockSizeException | NoSuchPaddingException e) {
+									System.err.println(e.getMessage());
+									System.exit(-1);
+								}
 							}
 							case "ADD" -> {
 								String userToAdd = client_Commands[1];
@@ -206,10 +264,10 @@ class ServerThread extends Thread {
 											out.writeObject("NOK");
 										} else {
 											if (value > 600) {
-												value = 600; 
+												value = 600;
 											}
 
-											String division = deviceName.substring(0, 1).toUpperCase(); 
+											String division = deviceName.substring(0, 1).toUpperCase();
 											File deviceFile = new File("homes/" + homeNameEC + "/" + division + "/" + deviceName + ".txt");
 	
 											if (deviceFile.exists()) {
@@ -303,13 +361,17 @@ class ServerThread extends Thread {
 		}
 	}
 
-	private void authenticate(String user, String pwd) {
+	private void authenticate(String [] args) {
 		try(Scanner sc = new Scanner(users)) {
 			while (sc.hasNextLine()) {
 				String[] credentials = sc.nextLine().split(":");
-				if (credentials[0].equals(user)) {
+				if (credentials[0].equals(args[args.length - 2])) {
 					while(true){
-						if (credentials[1].equals(pwd)) {
+						out.writeObject("NO_CERT");
+						out.flush();
+						byte[] salt = Base64.getDecoder().decode(credentials[2]);
+						String passHash = hashPassword(pwd, salt);
+						if (credentials[1].equals(passHash)) {
 							out.writeObject("OK_USER");
 							out.flush();
 							System.out.println("["+ user +" Thread] Authentication successful for user: " + user);
@@ -333,17 +395,58 @@ class ServerThread extends Thread {
     }
 
     private void createUser(String user, String pwd) {
-		String newUser = user + ":" + pwd;
-		try(FileWriter fw = new FileWriter(users, true)) {
-			fw.write(newUser + System.lineSeparator());
-			System.out.println("[" + user + " Thread] New user created: " + user);
+		try {
+			byte[] salt = generateSalt();
+			String hash = hashPassword(pwd, salt);
+			String newUser = user + ":" + hash + ":" + Base64.getEncoder().encodeToString(salt);
+			try(FileWriter fw = new FileWriter(users, true)) {
+				fw.write(newUser + System.lineSeparator());
+				System.out.println("[" + user + " Thread] New user created: " + user);
+			} catch (IOException e) {
+				System.err.println(e.getMessage());
+				System.exit(-1);
+			}
+	
+			out.writeObject("SEND_CERT");
+			out.flush();
+
+			try(FileOutputStream cert = new FileOutputStream(Path.of("Certs", user + ".cer").toString())) {
+				int bytesRead;
+				long size = in.readLong();
+				byte[] buffer = new byte[1024];
+				while(size > 0 && (bytesRead = in.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
+				cert.write(buffer, 0, bytesRead);
+				size -= bytesRead;
+				}
+			}
 		} catch (IOException e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
     }
 
-    private void createHome(String homeName) {
+	private String hashPassword(String pwd2, byte[] salt) {
+		MessageDigest md;
+		byte [] hash;
+		try {
+			md = MessageDigest.getInstance("SHA-256");
+			md.update(salt);
+			hash = md.digest(pwd2.getBytes());
+			return Base64.getEncoder().encodeToString(hash);
+		} catch (NoSuchAlgorithmException e) {
+			System.err.println(e.getMessage());
+			System.exit(-1);
+		}
+		return null;
+	}
+
+	private byte[] generateSalt() {
+        byte[] saltBytes = new byte[16];
+        new SecureRandom().nextBytes(saltBytes);
+        return saltBytes;
+    }
+
+	private void createHome(String homeName) {
 		try {
 			if(homeExists(homeName)){
 				out.writeObject("HOME_EXISTS");

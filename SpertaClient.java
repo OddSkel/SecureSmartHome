@@ -1,16 +1,25 @@
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
+import java.nio.file.Files;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
 import java.util.Arrays;
 import java.util.Scanner;
 
 public class SpertaClient {
   private int port;
   private String host;
-  private String user, pwd;
+  private String user, pwd, trustore, pass_truststore, keystore, pass_keystore;
 
   private static final String COMMAND_LIST =
   """
@@ -26,16 +35,21 @@ public class SpertaClient {
   private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
 
   public static void main(String[] args) {
-    if (args.length != 3) {
-      System.out.println("Usage: java SpertaClient <host:port> <username> <password>");
+    if (args.length != 7 ) {
+      System.out.println( "Usage: java SpertaClient <host:port> <truststore> <password-truststore>" +
+                          "<keystore> <password-keystore> <user-id> <password>");
       System.exit(-1);
     }
 
     String[] serverAddress = args[0].split(":");
 
     SpertaClient client = new SpertaClient();
-    client.user = args[1];
-    client.pwd = args[2];
+    client.trustore = args[1];
+    client.pass_truststore = args[2];
+    client.keystore = args[3];
+    client.pass_keystore = args[4];
+    client.user = args[5];
+    client.pwd = args[6];
     client.host = serverAddress[0];
     switch (serverAddress.length) {
       case 2 -> client.port = Integer.parseInt(serverAddress[1]);
@@ -61,9 +75,43 @@ public class SpertaClient {
         outStream.flush();
         String integrity_check = (String) inStream.readObject();
         if (integrity_check.equals("OK-ATTEST")) {
+          outStream.writeObject(trustore);
+          outStream.writeObject(pass_truststore);
+          outStream.writeObject(keystore);
+          outStream.writeObject(pass_keystore);
           outStream.writeObject(user);
           outStream.writeObject(pwd);
           outStream.flush();
+
+          String serverMsg = (String) inStream.readObject();
+          if (serverMsg.equals("SEND_CERT")) {
+            try {
+              KeyStore ks = KeyStore.getInstance("JCEKS");
+              ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
+              Certificate cert = ks.getCertificate("keyrsa");
+              if (cert == null) {
+                System.err.println("No certificate found for alias: " + user);
+                System.exit(-1);
+              }
+
+              File f = new File("Certs", user + ".cer");
+              Files.write(f.toPath(), cert.getEncoded());
+
+              outStream.writeLong(f.length());
+              outStream.flush();
+              try(FileInputStream certificate = new FileInputStream(f)){
+                int bytesToRead;
+                byte [] buf = new byte[1024];
+                while((bytesToRead = certificate.read(buf, 0, buf.length))!= -1){
+                  outStream.write(buf, 0, bytesToRead);
+                  outStream.flush();
+                }
+              }
+            } catch (IOException | KeyStoreException | NoSuchAlgorithmException | CertificateException e) {
+              System.err.println(e.getMessage());
+              System.exit(-1);
+            }
+          }
           checkSResp(inStream, outStream, user_input);
           
           while(true) {
@@ -253,5 +301,9 @@ public class SpertaClient {
     }
   }
 
-
+  private byte[] generateSalt() {
+        byte[] saltBytes = new byte[16];
+        new SecureRandom().nextBytes(saltBytes);
+        return saltBytes;
+    }
 }
