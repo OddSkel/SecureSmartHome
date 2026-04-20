@@ -264,19 +264,19 @@ class ServerThread extends Thread {
 									case 0 -> out.writeObject(new String[]{"NOPERM"});
 									case 1 -> {
 										File dir = new File("homes/" + client_Commands[1] + "/" + client_Commands[2]);
-										File keyFile = new File(dir, "key." + client_Commands[1] + "." + client_Commands[2] + "." + user);
 										File[] matchingFiles = dir.listFiles((d, name) -> name.startsWith(client_Commands[2]));
-										out.writeObject(keyFile.length());
-										try(FileInputStream key = new FileInputStream(keyFile)){
-											int bytesToRead;
-											byte [] buf = new byte[1024];
-											while((bytesToRead = key.read(buf, 0, buf.length))!= -1){
-												out.write(buf, 0, bytesToRead);
-												out.flush();
-											}
-										}
 										if (matchingFiles.length == 1) {
 											out.writeObject(new String[]{"OK", Long.toString(matchingFiles[0].length()), matchingFiles[0].getName()});
+											File keyFile = new File(dir, "key." + client_Commands[1] + "." + client_Commands[2] + "." + user);
+											out.writeObject(keyFile.length());
+											try(FileInputStream key = new FileInputStream(keyFile)){
+												int bytesToRead;
+												byte [] buf = new byte[1024];
+												while((bytesToRead = key.read(buf, 0, buf.length))!= -1){
+													out.write(buf, 0, bytesToRead);
+													out.flush();
+												}
+											}
 											try(FileInputStream key = new FileInputStream(matchingFiles[0])){
 												int bytesToRead;
 												byte [] buf = new byte[1024];
@@ -289,6 +289,16 @@ class ServerThread extends Thread {
 										}
 										else{
 											out.writeObject(new String[]{"OK", Long.toString(0)});
+											File keyFile = new File(dir, "key." + client_Commands[1] + "." + client_Commands[2] + "." + user);
+											out.writeObject(keyFile.length());
+											try(FileInputStream key = new FileInputStream(keyFile)){
+												int bytesToRead;
+												byte [] buf = new byte[1024];
+												while((bytesToRead = key.read(buf, 0, buf.length))!= -1){
+													out.write(buf, 0, bytesToRead);
+													out.flush();
+												}
+											}
 										}
 
 										String name = (String) in.readObject();
@@ -818,6 +828,15 @@ class ServerThread extends Thread {
 	}
 
 }
+
+/*
+try(FileWriter fW = new FileWriter(Paths.get("homes/" + target[1], target[2], target[2] + value + ".txt").toString())) {
+					fW.write(System.currentTimeMillis() + "," + key + ":" + value + System.lineSeparator());
+				} catch (Exception e) {
+					System.err.println(e.getMessage());
+					System.exit(-1);
+				}
+*/
 
 /*
 try(FileWriter fW = new FileWriter(Paths.get("homes/" + target[1], target[2], target[2] + value + ".txt").toString())) {
