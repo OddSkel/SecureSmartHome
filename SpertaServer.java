@@ -9,7 +9,6 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.InvalidKeyException;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
@@ -262,9 +261,53 @@ class ServerThread extends Thread {
 							case "RD" -> {
 								int result = verify(client_Commands, user);
 								switch (result) {
-									case 0 -> out.writeObject("NOPERM");
-									case 1 -> out.writeObject("OK");
-									case -1 -> out.writeObject("NOHM");
+									case 0 -> out.writeObject(new String[]{"NOPERM"});
+									case 1 -> {
+										File dir = new File("homes/" + client_Commands[1] + "/" + client_Commands[2]);
+										File keyFile = new File(dir, "key." + client_Commands[1] + "." + client_Commands[2] + "." + user);
+										File[] matchingFiles = dir.listFiles((d, name) -> name.startsWith(client_Commands[2]));
+										out.writeObject(keyFile.length());
+										try(FileInputStream key = new FileInputStream(keyFile)){
+											int bytesToRead;
+											byte [] buf = new byte[1024];
+											while((bytesToRead = key.read(buf, 0, buf.length))!= -1){
+												out.write(buf, 0, bytesToRead);
+												out.flush();
+											}
+										}
+										if (matchingFiles.length == 1) {
+											out.writeObject(new String[]{"OK", Long.toString(matchingFiles[0].length()), matchingFiles[0].getName()});
+											try(FileInputStream key = new FileInputStream(matchingFiles[0])){
+												int bytesToRead;
+												byte [] buf = new byte[1024];
+												while((bytesToRead = key.read(buf, 0, buf.length))!= -1){
+													out.write(buf, 0, bytesToRead);
+													out.flush();
+												}
+											}
+											matchingFiles[0].delete();
+										}
+										else{
+											out.writeObject(new String[]{"OK", Long.toString(0)});
+										}
+
+										String name = (String) in.readObject();
+										long size = in.readLong();
+										File deviceFile = new File(dir, name);
+
+										try(FileOutputStream history = new FileOutputStream(deviceFile)) {
+											int bytesRead;
+											byte[] buffer = new byte[1024];
+											while(size > 0 && (bytesRead = in.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
+												history.write(buffer, 0, bytesRead);
+												size -= bytesRead;
+											}
+										} catch (IOException e) {
+											System.err.println(e.getMessage());
+											System.exit(-1);
+										}
+									}
+									case -1 -> out.writeObject(new String[]{"NOHM"});
 									default -> throw new AssertionError();
 								}
 								out.flush();
@@ -687,7 +730,7 @@ class ServerThread extends Thread {
 							String [] devices = devicesPart.split(";");
 							int i = 0;
 							while (!devices[i].contains(commands[2])) i++;
-							line = updatedDevice(devices, devices[i], commands);
+							line = updatedDevice(devices, devices[i]);
 							updated.add(owners + ">" + line);
 						} else updated.add(line);
 					}
@@ -702,7 +745,7 @@ class ServerThread extends Thread {
 		return 2;
 	}
 
-	private String updatedDevice(String[] devices, String Key, String [] target) {
+	private String updatedDevice(String[] devices, String Key) {
 		StringBuilder sB = new StringBuilder();
 		String [] targetKey = Key.split(":");
 		for (int i = 0; i < devices.length; i++) {
@@ -713,12 +756,6 @@ class ServerThread extends Thread {
 				int counter = Integer.parseInt(value);
 				counter++;
 				value = String.valueOf(counter);
-				try(FileWriter fW = new FileWriter(Paths.get("homes/" + target[1], target[2], target[2] + value + ".txt").toString())) {
-					fW.write(System.currentTimeMillis() + "," + key + ":" + value + System.lineSeparator());
-				} catch (Exception e) {
-					System.err.println(e.getMessage());
-					System.exit(-1);
-				}
 			}
 			sB.append(key).append(":").append(value);
 			if (i < devices.length - 1) sB.append(";");
@@ -781,3 +818,12 @@ class ServerThread extends Thread {
 	}
 
 }
+
+/*
+try(FileWriter fW = new FileWriter(Paths.get("homes/" + target[1], target[2], target[2] + value + ".txt").toString())) {
+					fW.write(System.currentTimeMillis() + "," + key + ":" + value + System.lineSeparator());
+				} catch (Exception e) {
+					System.err.println(e.getMessage());
+					System.exit(-1);
+				}
+*/

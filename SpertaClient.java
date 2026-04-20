@@ -1,18 +1,24 @@
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.nio.file.Files;
+import java.security.Key;
+import java.security.KeyException;
 import java.security.KeyStore;
+import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.util.Arrays;
 import java.util.Scanner;
-
 import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.CipherOutputStream;
+import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 
 public class SpertaClient {
@@ -150,9 +156,53 @@ public class SpertaClient {
                 }
                 outStream.writeObject(command_Args);
                 outStream.flush();
-                String server_Response = (String) inStream.readObject();
-                switch (server_Response) {
-                    case "OK"-> System.out.println("OK");
+
+                File f = new File("key." + command_Args[1] + "." + command_Args[2] + "." + user);
+                try(FileOutputStream key = new FileOutputStream(f)) {
+                  int bytesRead;
+                  long size = (long) inStream.readObject();
+                  byte[] buffer = new byte[1024];
+                  while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
+                    key.write(buffer, 0, bytesRead);
+                    size -= bytesRead;
+                  }
+                }catch (IOException e) {
+                  System.err.println(e.getMessage());
+                  System.exit(-1);
+                }
+                String [] server_Response = (String []) inStream.readObject();
+                switch (server_Response[0]) {
+                    case "OK"->{
+                      File log;
+                      if (!"0".equals(server_Response[1])){
+                        log = new File(server_Response[2]);
+                        long size = Long.parseLong(server_Response[1]);
+                        long filesize = size;
+                        try(FileOutputStream device = new FileOutputStream(log)) {
+                        int bytesRead;
+                        byte[] buffer = new byte[1024];
+                        while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
+                          device.write(buffer, 0, bytesRead);
+                          size -= bytesRead;
+                        }
+                      }catch (IOException e) {
+                        System.err.println(e.getMessage());
+                        System.exit(-1);
+                      }
+                        decipher(f,log, filesize);
+                        cipher(server_Response[2], f, outStream);
+
+                        log.delete();
+                      }else{
+                        log = new File(command_Args[2] + "0.txt");
+                        log.createNewFile();
+                        cipher(log.getName(), f, outStream);
+                        log.delete();
+                      }
+                      log.delete();
+                      f.delete();
+                      System.out.println("OK");
+                    }
                     case "NOPERM" -> System.out.println("NOPERM # no permissions");
                     case "NOHM" -> System.out.println("NOHM # no such house");
                     default -> throw new AssertionError();
@@ -293,6 +343,127 @@ public class SpertaClient {
       System.exit(-1);
     }
 	}
+
+  private void cipher(String decrypted_file, File key, ObjectOutputStream outStream) {
+    try {
+        Key aesKey = getKey(key);
+        if (aesKey == null) throw new KeyException("Key not found!");
+
+        String nameWithoutExt = decrypted_file.substring(0, decrypted_file.lastIndexOf('.'));
+        int number = Character.getNumericValue(nameWithoutExt.charAt(1));
+        number++;
+
+        String filename = nameWithoutExt.substring(0, 1) + number + ".txt";
+
+        try(FileWriter fW = new FileWriter(decrypted_file, true)) {
+					fW.write(System.currentTimeMillis() + "," + nameWithoutExt.charAt(0) + ":" + number + System.lineSeparator());
+				} catch (Exception e) {
+					System.err.println(e.getMessage());
+					System.exit(-1);
+				}
+
+        File f = new File(filename);
+        Cipher c = Cipher.getInstance("AES");
+        c.init(Cipher.ENCRYPT_MODE, aesKey);
+
+        // Encrypt to temp file first
+        File d = new File(decrypted_file);
+        File tempFile = new File(filename + ".enc");
+        try (FileInputStream logFile = new FileInputStream(d);
+            FileOutputStream tempOut = new FileOutputStream(tempFile);
+            CipherOutputStream cout = new CipherOutputStream(tempOut, c)) {
+            int bytesToRead;
+            byte[] buf = new byte[1024];
+            while ((bytesToRead = logFile.read(buf, 0, buf.length)) != -1) {
+                cout.write(buf, 0, bytesToRead);
+            }
+        }
+
+        outStream.writeObject(filename);
+        outStream.writeLong(tempFile.length());
+        outStream.flush();
+
+        try (FileInputStream encStream = new FileInputStream(tempFile)) {
+            int bytesToRead;
+            byte[] buf = new byte[1024];
+            while ((bytesToRead = encStream.read(buf, 0, buf.length)) != -1) {
+                outStream.write(buf, 0, bytesToRead);
+                outStream.flush();
+            }
+        }
+        tempFile.delete();
+        f.delete();
+    } catch (IOException | KeyException | NoSuchAlgorithmException | NoSuchPaddingException e) {
+      System.err.println(e.getMessage());
+			System.exit(-1);
+    }
+  }
+
+  private void decipher(File key, File log, long size) {
+    String fileName = "received_log_file.txt";
+    try {
+        Key aesKey = getKey(key);
+        if (aesKey == null) throw new KeyException("Key not found!");
+
+        Cipher c = Cipher.getInstance("AES");
+        c.init(Cipher.DECRYPT_MODE, aesKey);
+
+        try ( FileOutputStream fileReceived = new FileOutputStream(fileName);
+              FileInputStream fin = new FileInputStream(log);
+              CipherInputStream cipherIn = new CipherInputStream(fin, c)) {
+                
+          int bytesRead;
+          byte[] buffer = new byte[1024];
+          while (size > 0 && (bytesRead = cipherIn.read(buffer, 0, (int) Math.min(size, buffer.length))) != -1) {
+              fileReceived.write(buffer, 0, bytesRead);
+              size -= bytesRead;
+          }
+      } catch (IOException e) {
+          System.err.println(e.getMessage());
+          System.exit(-1);
+      }
+    } catch (KeyException | NoSuchAlgorithmException | NoSuchPaddingException e) {
+      System.err.println(e.getMessage());
+      System.exit(-1);
+    }
+    File f = new File(fileName);
+    f.delete();
+  }
+
+  private Key getKey(File f) {
+    Key aesKey = null;
+    try {
+      byte[] chaveAEScifrada;
+      try (FileInputStream kos = new FileInputStream(f)) {
+          chaveAEScifrada = new byte[kos.available()];
+          kos.read(chaveAEScifrada);
+      }
+
+      KeyStore kstore = KeyStore.getInstance("JCEKS");
+      kstore.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
+      Key myprivateKey = kstore.getKey("keyrsa", pass_keystore.toCharArray());
+      if (myprivateKey == null) {
+          throw new Exception("Private key for user '" + user + "' not found in keystore.");
+      }
+      PrivateKey pk = (PrivateKey) myprivateKey;
+  
+      Cipher cRSA = Cipher.getInstance("RSA");
+      cRSA.init(Cipher.UNWRAP_MODE, pk);
+      aesKey = cRSA.unwrap(chaveAEScifrada, "AES", Cipher.SECRET_KEY);
+  
+      if (!(aesKey instanceof SecretKey)) {
+          throw new Exception("Key is not a SecretKey!");
+      }
+      byte[] keyBytes = aesKey.getEncoded();
+      if (keyBytes == null || (keyBytes.length != 16 && keyBytes.length != 24 && keyBytes.length != 32)) {
+          throw new Exception("Invalid AES key length: " + (keyBytes == null ? "null" : keyBytes.length) + " bytes");
+      }
+    } catch (Exception e) {
+      System.err.println(e.getMessage());
+      System.exit(-1);
+    }
+    return aesKey;
+  }
 
   private void checkSResp(ObjectInput in, ObjectOutputStream out, Scanner sc) {
     try{
