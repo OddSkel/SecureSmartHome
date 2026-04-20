@@ -182,23 +182,22 @@ public class SpertaClient {
                 }
                 outStream.writeObject(command_Args);
                 outStream.flush();
-
-                File f = new File("key." + command_Args[1] + "." + command_Args[2] + "." + user);
-                try(FileOutputStream key = new FileOutputStream(f)) {
-                  int bytesRead;
-                  long size = (long) inStream.readObject();
-                  byte[] buffer = new byte[1024];
-                  while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
-                    key.write(buffer, 0, bytesRead);
-                    size -= bytesRead;
-                  }
-                }catch (IOException e) {
-                  System.err.println(e.getMessage());
-                  System.exit(-1);
-                }
                 String [] server_Response = (String []) inStream.readObject();
                 switch (server_Response[0]) {
                     case "OK"->{
+                      File f = new File("key." + command_Args[1] + "." + command_Args[2] + "." + user);
+                      try(FileOutputStream key = new FileOutputStream(f)) {
+                        int bytesRead;
+                        long size = (long) inStream.readObject();
+                        byte[] buffer = new byte[1024];
+                        while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
+                          key.write(buffer, 0, bytesRead);
+                          size -= bytesRead;
+                        }
+                      }catch (IOException e) {
+                        System.err.println(e.getMessage());
+                        System.exit(-1);
+                      }
                       File log;
                       if (!"0".equals(server_Response[1])){
                         log = new File(server_Response[2]);
@@ -333,7 +332,7 @@ public class SpertaClient {
       System.exit(-1);
     }
 	}
-
+  
   private void cipher(String decrypted_file, File key, ObjectOutputStream outStream) {
     try {
         Key aesKey = getKey(key);
