@@ -274,7 +274,7 @@ class ServerThread extends Thread {
 								String deviceName = client_Commands[2];
 								String s = deviceName.substring(0,1).toUpperCase();
 	
-								if(verifyUserPermission(homeNameEC, deviceName, s)){
+								if(verifyUserPermission(homeNameEC, user, s)){
 									File keyFile = new File("homes/" + homeNameEC + "/" + s, "key." + homeNameEC + "." + s + "." + user);
 									byte[] wrappedKey = Files.readAllBytes(keyFile.toPath());
 									out.writeObject(wrappedKey); 

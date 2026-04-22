@@ -1,3 +1,4 @@
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -5,6 +6,7 @@ import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
+import java.nio.file.Files;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.util.Arrays;
@@ -17,6 +19,9 @@ public class SpertaClient {
   private int port;
   private String host;
   private String user, pwd;
+
+  private String truststore;      
+  private String pass_truststore;
 
   private String keystore;
   private String pass_keystore;
@@ -42,13 +47,16 @@ public class SpertaClient {
     String[] serverAddress = args[0].split(":");
 
     SpertaClient client = new SpertaClient();
+    
     client.host = serverAddress[0];
-    client.user = args[1];
-    client.pwd = args[2];
-    client.keystore = args[3];
-    client.pass_keystore = args[4];
-    client.user = args[5];
+    client.port = (serverAddress.length == 2) ? Integer.parseInt(serverAddress[1]) : 22345;
+    client.truststore = args[1];          
+    client.pass_truststore = args[2];   
+    client.keystore = args[3];         
+    client.pass_keystore = args[4];     
+    client.user = args[5];              
     client.pwd = args[6];
+
     switch (serverAddress.length) {
       case 2 -> client.port = Integer.parseInt(serverAddress[1]);
       case 1 -> client.port = 22345;
@@ -73,6 +81,10 @@ public class SpertaClient {
         outStream.flush();
         String integrity_check = (String) inStream.readObject();
         if (integrity_check.equals("OK-ATTEST")) {
+          outStream.writeObject(truststore);
+          outStream.writeObject(pass_truststore);
+          outStream.writeObject(keystore);
+          outStream.writeObject(pass_keystore);
           outStream.writeObject(user);
           outStream.writeObject(pwd);
           outStream.flush();
@@ -148,15 +160,14 @@ public class SpertaClient {
               }
               case "EC" -> {
                 if (command_Args.length != 4) {
-                    System.out.println("Erro: Use EC <casa> <dispositivo> <valor>");
+                    System.out.println("Usage: EC <hm> <d> <int>");
                 } else {
                     outStream.writeObject(new String[]{"EC", command_Args[1], command_Args[2]});
                     outStream.flush();
 
                     Object response = inStream.readObject();
                     
-                    if (response instanceof byte[]) {
-                        byte[] wrappedKey = (byte[]) response;
+                    if (response instanceof byte[] wrappedKey) {
 
                         try {
                             KeyStore ks = KeyStore.getInstance("JCEKS");
@@ -167,8 +178,24 @@ public class SpertaClient {
                             rsaCipher.init(Cipher.UNWRAP_MODE, privKey);
                             SecretKey sKey = (SecretKey) rsaCipher.unwrap(wrappedKey, "AES", Cipher.SECRET_KEY);
 
+                            String home = command_Args[1];
+                            File localLog = new File(home + "_devicesLog.txt");
+                            StringBuilder logData = new StringBuilder();
+                            
+                            if (localLog.exists()) {
+                                logData.append(Files.readString(localLog.toPath()));
+                            }
+                            // Adicionar nova entrada
+                            logData.append(System.currentTimeMillis()).append(",")
+                                  .append(command_Args[2]).append(",")
+                                  .append(command_Args[3]).append("\n");
+                            
+                            Files.writeString(localLog.toPath(), logData.toString());
+                            
+
                             Cipher aesCipher = Cipher.getInstance("AES");
                             aesCipher.init(Cipher.ENCRYPT_MODE, sKey);
+
                             byte[] encryptedVal = aesCipher.doFinal(command_Args[3].getBytes());
 
                             outStream.writeObject(encryptedVal);
