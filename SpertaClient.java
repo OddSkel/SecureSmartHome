@@ -18,6 +18,8 @@ public class SpertaClient {
   private String host;
   private String user, pwd;
 
+  private String keystore;
+  private String pass_keystore;
   private static final String COMMAND_LIST =
   """
   Available Commands:
@@ -32,17 +34,21 @@ public class SpertaClient {
   private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
 
   public static void main(String[] args) {
-    if (args.length != 3) {
-      System.out.println("Usage: java SpertaClient <host:port> <username> <password>");
+    if (args.length != 7) {
+      System.out.println("Usage: java SpertaClient <host:port> <truststore> <password-truststore> <keystore> <password-keystore> <user-id> <password>");
       System.exit(-1);
     }
 
     String[] serverAddress = args[0].split(":");
 
     SpertaClient client = new SpertaClient();
+    client.host = serverAddress[0];
     client.user = args[1];
     client.pwd = args[2];
-    client.host = serverAddress[0];
+    client.keystore = args[3];
+    client.pass_keystore = args[4];
+    client.user = args[5];
+    client.pwd = args[6];
     switch (serverAddress.length) {
       case 2 -> client.port = Integer.parseInt(serverAddress[1]);
       case 1 -> client.port = 22345;
@@ -155,11 +161,11 @@ public class SpertaClient {
                         try {
                             KeyStore ks = KeyStore.getInstance("JCEKS");
                             ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
-                            java.security.PrivateKey privKey = (java.security.PrivateKey) ks.getKey("keyrsa", pass_keystore.toCharArray());
+                            PrivateKey privKey = (PrivateKey) ks.getKey("keyrsa", pass_keystore.toCharArray());
 
                             Cipher rsaCipher = Cipher.getInstance("RSA");
                             rsaCipher.init(Cipher.UNWRAP_MODE, privKey);
-                            javax.crypto.SecretKey sKey = (javax.crypto.SecretKey) rsaCipher.unwrap(wrappedKey, "AES", Cipher.SECRET_KEY);
+                            SecretKey sKey = (SecretKey) rsaCipher.unwrap(wrappedKey, "AES", Cipher.SECRET_KEY);
 
                             Cipher aesCipher = Cipher.getInstance("AES");
                             aesCipher.init(Cipher.ENCRYPT_MODE, sKey);
