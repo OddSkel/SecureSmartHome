@@ -1,4 +1,3 @@
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -6,19 +5,18 @@ import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
-import java.nio.file.Files;
 import java.security.KeyStore;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateException;
+import java.security.PrivateKey;
 import java.util.Arrays;
 import java.util.Scanner;
+
+import javax.crypto.Cipher;
+import javax.crypto.SecretKey;
 
 public class SpertaClient {
   private int port;
   private String host;
-  private String user, pwd, trustore, pass_truststore, keystore, pass_keystore;
+  private String user, pwd;
 
   private static final String COMMAND_LIST =
   """
@@ -34,21 +32,16 @@ public class SpertaClient {
   private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
 
   public static void main(String[] args) {
-    if (args.length != 7 ) {
-      System.out.println( "Usage: java SpertaClient <host:port> <truststore> <password-truststore>" +
-                          "<keystore> <password-keystore> <user-id> <password>");
+    if (args.length != 3) {
+      System.out.println("Usage: java SpertaClient <host:port> <username> <password>");
       System.exit(-1);
     }
 
     String[] serverAddress = args[0].split(":");
 
     SpertaClient client = new SpertaClient();
-    client.trustore = args[1];
-    client.pass_truststore = args[2];
-    client.keystore = args[3];
-    client.pass_keystore = args[4];
-    client.user = args[5];
-    client.pwd = args[6];
+    client.user = args[1];
+    client.pwd = args[2];
     client.host = serverAddress[0];
     switch (serverAddress.length) {
       case 2 -> client.port = Integer.parseInt(serverAddress[1]);
@@ -74,43 +67,9 @@ public class SpertaClient {
         outStream.flush();
         String integrity_check = (String) inStream.readObject();
         if (integrity_check.equals("OK-ATTEST")) {
-          outStream.writeObject(trustore);
-          outStream.writeObject(pass_truststore);
-          outStream.writeObject(keystore);
-          outStream.writeObject(pass_keystore);
           outStream.writeObject(user);
           outStream.writeObject(pwd);
           outStream.flush();
-
-          String serverMsg = (String) inStream.readObject();
-          if (serverMsg.equals("SEND_CERT")) {
-            try {
-              KeyStore ks = KeyStore.getInstance("JCEKS");
-              ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
-              Certificate cert = ks.getCertificate("keyrsa");
-              if (cert == null) {
-                System.err.println("No certificate found for alias: " + user);
-                System.exit(-1);
-              }
-
-              File f = new File("Certs", user + ".cer");
-              Files.write(f.toPath(), cert.getEncoded());
-
-              outStream.writeLong(f.length());
-              outStream.flush();
-              try(FileInputStream certificate = new FileInputStream(f)){
-                int bytesToRead;
-                byte [] buf = new byte[1024];
-                while((bytesToRead = certificate.read(buf, 0, buf.length))!= -1){
-                  outStream.write(buf, 0, bytesToRead);
-                  outStream.flush();
-                }
-              }
-            } catch (IOException | KeyStoreException | NoSuchAlgorithmException | CertificateException e) {
-              System.err.println(e.getMessage());
-              System.exit(-1);
-            }
-          }
           checkSResp(inStream, outStream, user_input);
           
           while(true) {
@@ -185,17 +144,38 @@ public class SpertaClient {
                 if (command_Args.length != 4) {
                     System.out.println("Erro: Use EC <casa> <dispositivo> <valor>");
                 } else {
-                    outStream.writeObject(command_Args);
+                    outStream.writeObject(new String[]{"EC", command_Args[1], command_Args[2]});
                     outStream.flush();
-                    String response = (String) inStream.readObject();
-    
-                    switch (response) {
-                        case "OK" -> System.out.println("OK");
-                        case "NOK" -> System.out.println("NOK # valor inválido");
-                        case "NOHM" -> System.out.println("NOHM # esta casa não existe");
-                        case "NOD" -> System.out.println("NOD # este dispositivo não existe");
-                        case "NOPERM" -> System.out.println("NOPERM # sem permissões ");
-                        default -> System.out.println("Resposta inesperada: " + response);
+
+                    Object response = inStream.readObject();
+                    
+                    if (response instanceof byte[]) {
+                        byte[] wrappedKey = (byte[]) response;
+
+                        try {
+                            KeyStore ks = KeyStore.getInstance("JCEKS");
+                            ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
+                            java.security.PrivateKey privKey = (java.security.PrivateKey) ks.getKey("keyrsa", pass_keystore.toCharArray());
+
+                            Cipher rsaCipher = Cipher.getInstance("RSA");
+                            rsaCipher.init(Cipher.UNWRAP_MODE, privKey);
+                            javax.crypto.SecretKey sKey = (javax.crypto.SecretKey) rsaCipher.unwrap(wrappedKey, "AES", Cipher.SECRET_KEY);
+
+                            Cipher aesCipher = Cipher.getInstance("AES");
+                            aesCipher.init(Cipher.ENCRYPT_MODE, sKey);
+                            byte[] encryptedVal = aesCipher.doFinal(command_Args[3].getBytes());
+
+                            outStream.writeObject(encryptedVal);
+                            outStream.flush();
+
+                            System.out.println(inStream.readObject());
+
+                        } catch (Exception e) {
+                            System.err.println("Erro na criptografia: " + e.getMessage());
+                        }
+                    } else {
+                        // Se não for byte[], é uma mensagem de erro
+                        System.out.println("Erro do servidor: " + response);
                     }
                 }
               }
@@ -299,4 +279,6 @@ public class SpertaClient {
       System.err.println(e.getMessage());
     }
   }
+
+
 }

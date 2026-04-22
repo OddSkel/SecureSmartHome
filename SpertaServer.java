@@ -42,20 +42,39 @@ public class SpertaServer {
 	private static final int MAX_CLIENTS = 3;
 	private static final Semaphore signal = new Semaphore(MAX_CLIENTS);
 	private static final Semaphore command_signal = new Semaphore(1);
+
+	//public static void main(String[] args) {
+    //System.out.println("[SERVER] Starting server...");
+		//SpertaServer server = new SpertaServer();
+            //switch (args.length) {
+                //case 1 -> server.startServer(Integer.parseInt(args[0]));
+                //case 0 -> server.startServer(22345);
+                //default -> {
+                    //System.out.println("Usage: java SpertaServer <port>");
+                    //System.exit(-1);
+                //}
+            //}
+	//}
+
 	public static void main(String[] args) {
-    System.out.println("[SERVER] Starting server...");
-		SpertaServer server = new SpertaServer();
-            switch (args.length) {
-                case 1 -> server.startServer(Integer.parseInt(args[0]));
-                case 0 -> server.startServer(22345);
-                default -> {
-                    System.out.println("Usage: java SpertaServer <port>");
-                    System.exit(-1);
-                }
-            }
+    	System.out.println("[SERVER] Starting server...");
+    	SpertaServer server = new SpertaServer();
+    
+    	if (args.length == 4) {
+        	int port = Integer.parseInt(args[0]);
+        	String pwdCifra = args[1];
+        	String keystore = args[2];
+        	String pwdKeystore = args[3];
+        	server.startServer(port, pwdCifra, keystore, pwdKeystore);
+    	} else if (args.length == 0) {
+        	server.startServer(22345, "defaultPwd", "Keys/keystore.server", "123456");
+    	} else {
+        	System.out.println("Usage: java SpertaServer <port> <password-cifra> <keystore> <password-keystore>");
+        	System.exit(-1);
+    	}
 	}
 
-	public void startServer (int port){
+	public void startServer (int port, String pwdCifra, String ksPath, String ksPwd){
 		try(ServerSocket sSoc = new ServerSocket(port)) {
 			System.out.println("[SERVER] Server started on port " + port);
 			while(true) {
@@ -78,7 +97,7 @@ public class SpertaServer {
 					check.writeObject("OK-ATTEST");
 					check.flush();
 					signal.acquire();
-					ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check, rec);
+					ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check, rec, pwdCifra, ksPath, ksPwd);
 					newServerThread.start();
 				} catch (IOException e) {
 					System.err.println(e.getMessage());
@@ -102,6 +121,10 @@ class ServerThread extends Thread {
 	private Semaphore signal = null;
 	private Semaphore command = null;
 
+	private String serverPwdCifra;
+    private String serverKsPath;
+    private String serverKsPwd;
+
 	private File users, homes, homesFolder;
 	private String user, pwd, trustore, pass_truststore, keystore, pass_keystore;
 	private final ObjectInputStream in;
@@ -109,12 +132,19 @@ class ServerThread extends Thread {
 
 	private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
 
-	ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal, ObjectOutputStream out, ObjectInputStream in) {
-		socket = inSoc;
-		this.signal = signal;
-		command = command_signal;
-		this.out = out;
-		this.in = in;
+	ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal, 
+                 ObjectOutputStream out, ObjectInputStream in, 
+                 String pwdCifra, String ksPath, String ksPwd) {
+		this.socket = inSoc;
+        this.signal = signal;
+        this.command = command_signal;
+        this.out = out;
+        this.in = in;
+
+        this.serverPwdCifra = pwdCifra;
+        this.serverKsPath = ksPath;
+        this.serverKsPwd = ksPwd;
+
 		System.out.println("thread do server para cada cliente");
 	}
 
@@ -239,54 +269,31 @@ class ServerThread extends Thread {
 								}
 								out.flush();
 							}
-							case "EC" -> {
-								if (client_Commands.length < 4) {
-									out.writeObject("NOK");
-									out.flush();
-									break;
-								}
-	
+							case "EC" -> {							
 								String homeNameEC = client_Commands[1];
 								String deviceName = client_Commands[2];
-								String valStr = client_Commands[3];
+								String s = deviceName.substring(0,1).toUpperCase();
 	
-								if (!homeExists(homeNameEC)) {
-									out.writeObject("NOHM");
-								}
-								else if (!checkOwner(homeNameEC, user) && !verifyUserPermission(homeNameEC, user)) {
-									out.writeObject("NOPERM");
-								}
-								else {
-									try {
-										int value = Integer.parseInt(valStr);
-	
-										if (value < 0 ) {
-											out.writeObject("NOK");
-										} else {
-											if (value > 600) {
-												value = 600;
-											}
+								if(verifyUserPermission(homeNameEC, deviceName, s)){
+									File keyFile = new File("homes/" + homeNameEC + "/" + s, "key." + homeNameEC + "." + s + "." + user);
+									byte[] wrappedKey = Files.readAllBytes(keyFile.toPath());
+									out.writeObject(wrappedKey); 
+        							out.flush();
+								
 
-											String division = deviceName.substring(0, 1).toUpperCase();
-											File deviceFile = new File("homes/" + homeNameEC + "/" + division + "/" + deviceName + ".txt");
-	
-											if (deviceFile.exists()) {
-												try (FileWriter fwDevice = new FileWriter(deviceFile, true)) {
-													fwDevice.write(System.currentTimeMillis() + "," + deviceName + "," + value + System.lineSeparator());
-												}
-												updateGlobalDeviceLog(homeNameEC, deviceName, String.valueOf(value));
-												
-												out.writeObject("OK");
-												System.out.println("[" + user + " Thread] EC: " + deviceName + " -> " + value);
-											} else {
-												out.writeObject("NOD");
-											}
-										}
-									} catch (NumberFormatException e) {
-										out.writeObject("NOK");
-									}
-								}
-								out.flush();
+									byte[] encryptedValue = (byte[]) in.readObject();
+									String valToStore = Base64.getEncoder().encodeToString(encryptedValue);
+
+									File deviceFile = new File("homes/" + homeNameEC + "/" + s + "/" + deviceName + ".txt");
+            						try (FileWriter fwDevice = new FileWriter(deviceFile, true)) {
+                						fwDevice.write(System.currentTimeMillis() + "," + deviceName + "," + valToStore + System.lineSeparator());
+            						}
+									
+									updateGlobalDeviceLog(homeNameEC, deviceName, valToStore);
+									out.writeObject("OK");
+								} else {
+        							out.writeObject("NOPERM");
+    							}
 							}
 							case "RT" -> {
 								Number result = getHistory(client_Commands[1], user);
