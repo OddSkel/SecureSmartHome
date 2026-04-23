@@ -26,7 +26,7 @@ public class SpertaClient {
   private String host;
   private String user, pwd;
 
-  private String truststore;      
+  private String truststore;
   private String pass_truststore;
 
   private String keystore;
@@ -56,11 +56,11 @@ public class SpertaClient {
     
     client.host = serverAddress[0];
     client.port = (serverAddress.length == 2) ? Integer.parseInt(serverAddress[1]) : 22345;
-    client.truststore = args[1];          
-    client.pass_truststore = args[2];   
-    client.keystore = args[3];         
-    client.pass_keystore = args[4];     
-    client.user = args[5];              
+    client.truststore = args[1];
+    client.pass_truststore = args[2];
+    client.keystore = args[3];
+    client.pass_keystore = args[4];
+    client.user = args[5];
     client.pwd = args[6];
 
     switch (serverAddress.length) {
