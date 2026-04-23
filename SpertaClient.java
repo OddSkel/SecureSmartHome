@@ -304,7 +304,21 @@ public class SpertaClient {
           pwd = sc.nextLine();
           out.writeObject(pwd);
           out.flush();
-        } else {
+        } else if (serverMsg.equals("SEND_CERT")) {
+          // O servidor pediu o certificado, vamos enviá-lo
+          File certFile = new File("Certs/" + user + ".cer");
+          if (certFile.exists()) {
+              out.writeLong(certFile.length()); // Envia o tamanho
+              byte[] content = Files.readAllBytes(certFile.toPath());
+              out.write(content); // Envia o conteúdo
+              out.flush();
+          } else {
+              System.err.println("Erro: Certificado não encontrado em " + certFile.getPath());
+              out.writeLong(0);
+              out.flush();
+          }
+        } else if (serverMsg.equals("OK_USER") || serverMsg.equals("OK_NEW_USER")) {
+          // Só consideramos o user autenticado nestes dois casos explícitos
           userOk = true;
         }
       }

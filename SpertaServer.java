@@ -186,41 +186,43 @@ class ServerThread extends Thread {
 							case "CREATE" -> {
 								String houseName = client_Commands[1];
 								System.out.println("["+ user +" Thread] CREATE command received for home: " + houseName);
-								createHome(houseName);
-								try {
-									for (String section : Arrays.asList(Arrays.copyOfRange(PERMS, 1, PERMS.length))) {
-										//Generate keys
-										SecretKey newkey;
-										SecretKeyFactory factory = SecretKeyFactory.getInstance("PBEWithHmacSHA256AndAES_128");
-										KeySpec spec = new PBEKeySpec(pwd.toCharArray(), generateSalt(), 20);
-										SecretKey tmp = factory.generateSecret(spec);
-										byte[] keyBytes = tmp.getEncoded();
-										byte[] aesKeyBytes = Arrays.copyOf(keyBytes, 16);
-										newkey = new SecretKeySpec(aesKeyBytes, "AES");
+								if (createHome(houseName)) {
+									try {
+										for (String section : Arrays.asList(Arrays.copyOfRange(PERMS, 1, PERMS.length))) {
+											//Generate keys
+											SecretKey newkey;
+											SecretKeyFactory factory = SecretKeyFactory.getInstance("PBEWithHmacSHA256AndAES_128");
+											KeySpec spec = new PBEKeySpec(pwd.toCharArray(), generateSalt(), 20);
+											SecretKey tmp = factory.generateSecret(spec);
+											byte[] keyBytes = tmp.getEncoded();
+											byte[] aesKeyBytes = Arrays.copyOf(keyBytes, 16);
+											newkey = new SecretKeySpec(aesKeyBytes, "AES");
 
-										//Get Certificate
-										File kS = new File("Keys", keystore);
-										FileInputStream kfile = new FileInputStream(kS);
-										KeyStore kstore = KeyStore.getInstance("JCEKS");
-										kstore.load(kfile, pass_keystore.toCharArray());
-										Certificate cert = kstore.getCertificate("keyrsa");
+											//Get Certificate
+											File kS = new File("Keys", keystore);
+											FileInputStream kfile = new FileInputStream(kS);
+											KeyStore kstore = KeyStore.getInstance("JCEKS");
+											kstore.load(kfile, pass_keystore.toCharArray());
+											Certificate cert = kstore.getCertificate("keyrsa");
 
-										//Get PK and cipher with it
-										PublicKey pk = cert.getPublicKey();
-										Cipher c = Cipher.getInstance("RSA");
-										c.init(Cipher.WRAP_MODE, pk);
-										byte[] wrappedKey = c.wrap(newkey);
+											//Get PK and cipher with it
+											PublicKey pk = cert.getPublicKey();
+											Cipher c = Cipher.getInstance("RSA");
+											c.init(Cipher.WRAP_MODE, pk);
+											byte[] wrappedKey = c.wrap(newkey);
 
-										//Create key file
-										File keyFile = new File("homes/" + houseName + "/" + section, "key." + houseName + "." + section + "." + user);
-										try(FileOutputStream keySection = new FileOutputStream(keyFile)){
-											keySection.write(wrappedKey);
+											//Create key file
+											File keyFile = new File("homes/" + houseName + "/" + section, "key." + houseName + "." + section + "." + user);
+											try(FileOutputStream keySection = new FileOutputStream(keyFile)){
+												keySection.write(wrappedKey);
+											}
 										}
+									} catch (IOException | InvalidKeyException | KeyStoreException | NoSuchAlgorithmException | CertificateException | InvalidKeySpecException | IllegalBlockSizeException | NoSuchPaddingException e) {
+										System.err.println(e.getMessage());
+										System.exit(-1);
 									}
-								} catch (IOException | InvalidKeyException | KeyStoreException | NoSuchAlgorithmException | CertificateException | InvalidKeySpecException | IllegalBlockSizeException | NoSuchPaddingException e) {
-									System.err.println(e.getMessage());
-									System.exit(-1);
 								}
+								
 							}
 							case "ADD" -> {
 								String userToAdd = client_Commands[1];
@@ -453,12 +455,13 @@ class ServerThread extends Thread {
         return saltBytes;
     }
 
-	private void createHome(String homeName) {
+	private boolean createHome(String homeName) {
 		try {
 			if(homeExists(homeName)){
 				out.writeObject("HOME_EXISTS");
 				out.flush();
 				System.out.println("[" + user + " Thread] Home creation failed. Home already exists: " + homeName);
+				return false;
 			} else {
 				try(FileWriter fw = new FileWriter(homes, true)) {
 					fw.write(homeName + ":"+ user + ">>E:0;G:0;L:0;M:0;P:0;S:0" + System.lineSeparator());
@@ -477,15 +480,15 @@ class ServerThread extends Thread {
 					System.out.println("[" + user + " Thread] Home created: " + homeName);
 					out.writeObject("HOME_CREATED");
 					out.flush();
+					return true;
 				} catch (IOException e) {
 					System.err.println(e.getMessage());
-					System.exit(-1);
 				}
 			}
 		} catch (IOException e) {
 			System.err.println(e.getMessage());
-			System.exit(-1);
 		}
+		return false;
     }
 
     private boolean userExists(String user) {
