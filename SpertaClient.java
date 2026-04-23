@@ -245,37 +245,85 @@ public class SpertaClient {
                 }
               }
               case "RH" -> {
-                  if (command_Args.length != 3) {
-                    System.out.println("Usage: RH <hm> <d>");
-                  } else {
-                      outStream.writeObject(command_Args);
-                      outStream.flush();
-                      
-                      Object responseObj = inStream.readObject();
-                      String response = (String) responseObj;
-    
-                      if (response.equals("OK")) {
-                          long fileSize = inStream.readLong();
-                          System.out.println("OK, " + fileSize + " (long), seguido de " + fileSize + " bytes de dados.");
-                          String fileName = command_Args[1] + "_" + command_Args[2] + ".csv";
-                          try (FileOutputStream fos = new FileOutputStream(fileName)) {
-                              byte[] buffer = new byte[1024];
-                              long remaining = fileSize;
-                              int bytesRead;
-                              while (remaining > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min((long) buffer.length, remaining))) != -1) {
-                                  fos.write(buffer, 0, bytesRead);
-                                  remaining -= bytesRead;
-                              }
-                          }
-                      } else {
-                          switch (response) {
+                if (command_Args.length != 4) {
+                    System.out.println("Usage: EC <hm> <d> <int>");
+                } else {
+                    outStream.writeObject(new String[]{"EC", command_Args[1], command_Args[2]});
+                    outStream.flush();
+
+                    Object responseObj = inStream.readObject();
+                    
+                    // Se a resposta for byte[], significa que o servidor enviou a chave com sucesso
+                    if (responseObj instanceof byte[] wrappedKey) {
+                        try {
+                            //Decifrar a chave de secção (AES) usando a chave privada RSA do cliente
+                            KeyStore ks = KeyStore.getInstance("JCEKS");
+                            ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
+                            PrivateKey privKey = (PrivateKey) ks.getKey("keyrsa", pass_keystore.toCharArray());
+
+                            Cipher rsaCipher = Cipher.getInstance("RSA");
+                            rsaCipher.init(Cipher.UNWRAP_MODE, privKey);
+                            SecretKey sKey = (SecretKey) rsaCipher.unwrap(wrappedKey, "AES", Cipher.SECRET_KEY);
+
+                            //Lógica do LOG LOCAL para evitar duplicação do mesmo dispositivo
+                            String home = command_Args[1];
+                            File localLog = new File(home + "_devicesLog.txt");
+
+                            //Usar um Map para garantir que cada dispositivo guarda apenas o último valor
+                            java.util.Map<String, String> deviceStates = new java.util.LinkedHashMap<>();
+
+                            if (localLog.exists()) {
+                                java.util.List<String> lines = java.nio.file.Files.readAllLines(localLog.toPath());
+                                for (String line : lines) {
+                                    String[] parts = line.split(",");
+                                    // O ficheiro tem o formato: timestamp, dispositivo, valor
+                                    if (parts.length >= 3) {
+                                        deviceStates.put(parts[1], line); 
+                                    }
+                                }
+                            }
+
+                            //Atualizar ou inserir a nova entrada com o último estado e o respetivo timestamp
+                            String newLine = System.currentTimeMillis() + "," + command_Args[2] + "," + command_Args[3];
+                            deviceStates.put(command_Args[2], newLine);
+
+                            //Reconstruir o conteúdo do ficheiro com os últimos estados de cada dispositivo
+                            StringBuilder logData = new StringBuilder();
+                            for (String line : deviceStates.values()) {
+                                logData.append(line).append("\n");
+                            }
+
+                            java.nio.file.Files.writeString(localLog.toPath(), logData.toString());
+
+                            //Cifrar o novo valor usando a chave de secção AES decifrada
+                            Cipher aesCipher = Cipher.getInstance("AES");
+                            aesCipher.init(Cipher.ENCRYPT_MODE, sKey);
+
+                            byte[] encryptedVal = aesCipher.doFinal(command_Args[3].getBytes());
+
+                            //Enviar o valor cifrado para o servidor
+                            outStream.writeObject(encryptedVal);
+                            outStream.flush();
+
+                            System.out.println(inStream.readObject());
+
+                        } catch (Exception e) {
+                            System.err.println("Erro na criptografia: " + e.getMessage());
+                        }
+                    } 
+                    // Se a resposta for uma String, significa que o servidor enviou uma mensagem de erro
+                    else if (responseObj instanceof String response) {
+                        switch (response) {
                             case "NOHM" -> System.out.println("NOHM # esta casa não existe");
                             case "NOD" -> System.out.println("NOD # dispositivo não existe");
                             case "NOPERM" -> System.out.println("NOPERM # sem permissões");
                             case "NODATA" -> System.out.println("NODATA # sem dados");
+                            case "NOKEY" -> System.out.println("NOKEY # erro de chave no servidor");
                             default -> System.out.println(response);
-                          }
-                      }
+                        }
+                    } else {
+                        System.out.println("Erro desconhecido do servidor.");
+                    }
                   }
                 }
               default -> {

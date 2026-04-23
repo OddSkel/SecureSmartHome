@@ -326,7 +326,7 @@ class ServerThread extends Thread {
 								String hm = client_Commands[1];
 								String dev = client_Commands[2];
 								String section = dev.substring(0, 1).toUpperCase();
-	
+
 								if (!homeExists(hm)) {
 									out.writeObject("NOHM");
 								} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
@@ -336,14 +336,27 @@ class ServerThread extends Thread {
 									
 									if (!logFile.exists()) {
 										out.writeObject("NOD");
-									} else if (logFile.length() == 0){out.writeObject("NODATA");}
-									else{
-										byte[] fileContent = Files.readAllBytes(logFile.toPath());
+									} else if (logFile.length() == 0){
+										out.writeObject("NODATA");
+									} else {
+										// Ir buscar a Chave de Secção do utilizador para esta secção
+										File keyFile = new File("homes/" + hm + "/" + section, "key." + hm + "." + section + "." + user);
 										
-										out.writeObject("OK");
-										out.writeLong((long) fileContent.length); // Envia o tamanho (LONG)
-										out.write(fileContent);                   // Envia o conteúdo
-										System.out.println("[" + user + " Thread] RH: Sent " + fileContent.length + " bytes for " + dev);
+										if (!keyFile.exists()) {
+											out.writeObject("NOKEY"); // Chave não encontrada
+										} else {
+											out.writeObject("OK");
+											
+											// 1. Enviar a Chave de Secção cifrada
+											byte[] wrappedKey = Files.readAllBytes(keyFile.toPath());
+											out.writeObject(wrappedKey);
+											
+											// 2. Ler e enviar o conteúdo do ficheiro de log
+											byte[] fileContent = Files.readAllBytes(logFile.toPath());
+											out.writeLong((long) fileContent.length); // Envia o tamanho
+											out.write(fileContent);                   // Envia o conteúdo
+											System.out.println("[" + user + " Thread] RH: Sent " + fileContent.length + " bytes for " + dev);
+										}
 									}
 								}
 								out.flush();
