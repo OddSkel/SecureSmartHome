@@ -120,24 +120,26 @@ public class SpertaClient {
                 }
               }
               case "ADD" -> {
+                if (command_Args.length != 4) {
+                  System.out.println("Usage: ADD <user> <home> <secção>");
+                  break;
+                } 
                 if (!Arrays.asList(PERMS).contains(command_Args[3])) {
                   System.out.println("Device doesn't exist. Devices available: " + Arrays.toString(PERMS));
                   break;
                 }
-                if (command_Args.length != 4) {
-                  System.out.println("Usage: ADD <user> <home> <secção>");
-                } else {
-                  outStream.writeObject(command_Args);
-                  outStream.flush();
-                  String server_Response = (String) inStream.readObject();
-                  switch (server_Response) {
-                      case "USER_ADDED" -> System.out.println("OK");
-                      case "USER_NOT_FOUND" -> System.out.println("NOUSER");
-                      case "HOME_NOT_FOUND" -> System.out.println("NOHM");
-                      case "NO_USER_PERMS" -> System.out.println("NOPERM");
-                      default -> System.out.println("NOK");
-                  }
+                
+                outStream.writeObject(command_Args);
+                outStream.flush();
+                String server_Response = (String) inStream.readObject();
+                switch (server_Response) {
+                    case "USER_ADDED" -> System.out.println("OK");
+                    case "USER_NOT_FOUND" -> System.out.println("NOUSER");
+                    case "HOME_NOT_FOUND" -> System.out.println("NOHM");
+                    case "NO_USER_PERMS" -> System.out.println("NOPERM");
+                    default -> System.out.println("NOK");
                 }
+              
               }
               case "RD" -> {
                 if (command_Args.length != 3) {

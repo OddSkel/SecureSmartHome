@@ -734,6 +734,9 @@ class ServerThread extends Thread {
 	}
 
     private boolean verifyUserPermission(String homeName, String user, String section) {
+		if (checkOwner(homeName, user)) {
+			return true;
+		}
 		try (Scanner sc = new Scanner(homes)) {
 			while (sc.hasNextLine()) {
 				String line = sc.nextLine();
