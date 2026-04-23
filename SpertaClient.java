@@ -7,24 +7,21 @@ import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
-import java.security.InvalidKeyException;
 import java.security.Key;
 import java.security.KeyException;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
-import java.security.UnrecoverableKeyException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.util.Arrays;
 import java.util.Scanner;
-import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
 import javax.crypto.CipherInputStream;
 import javax.crypto.CipherOutputStream;
-import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 
@@ -250,55 +247,61 @@ public class SpertaClient {
               case "EC" -> {
                 if (command_Args.length != 4) {
                     System.out.println("Usage: EC <hm> <d> <int>");
-                } else {
-                    outStream.writeObject(new String[]{"EC", command_Args[1], command_Args[2]});
+                    break;
+                } 
+
+                int value;
+                try {
+                    value = Integer.parseInt(command_Args[3]);
+                    if (value < 0 || value > 600) {
+                        System.out.println("NOK"); // Valor fora dos limites, aborta
+                        break; // Faz com que volte a pedir o "Insert Command:"
+                    }
+                } catch (NumberFormatException e) {
+                    System.out.println("NOK"); // Não é um número inteiro válido
+                    break;
+                }
+
+                // 2. Se o valor for válido, prossegue com a comunicação normal
+                try {
+                    // Enviar o comando inicial
+                    outStream.writeObject(command_Args);
                     outStream.flush();
 
                     Object response = inStream.readObject();
                     
-                    if (response instanceof byte[] wrappedKey) {
+                    // O servidor envia a chave da secção cifrada
+                    if (response instanceof byte[]) {
+                        byte[] keyBytes = (byte[]) response;
 
-                        try {
-                            KeyStore ks = KeyStore.getInstance("JCEKS");
-                            ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
-                            PrivateKey privKey = (PrivateKey) ks.getKey("keyrsa", pass_keystore.toCharArray());
-
-                            Cipher rsaCipher = Cipher.getInstance("RSA");
-                            rsaCipher.init(Cipher.UNWRAP_MODE, privKey);
-                            SecretKey sKey = (SecretKey) rsaCipher.unwrap(wrappedKey, "AES", Cipher.SECRET_KEY);
-
-                            String home = command_Args[1];
-                            File localLog = new File(home + "_devicesLog.txt");
-                            StringBuilder logData = new StringBuilder();
+                        // Criar ficheiro temporário para a tua função getKey(File f)
+                        File tempKey = new File("temp_ec.key");
+                        try (FileOutputStream fos = new FileOutputStream(tempKey)) {
+                            fos.write(keyBytes);
+                        }
+                        // Usar a tua função para fazer o unwrap da chave AES
+                        Key sectionKey = getKey(tempKey); 
+                        tempKey.delete();
+                        
+                        if (sectionKey != null) {
+                            // Passo c: Cifrar o valor e enviar (já não precisamos de verificar limites aqui)
+                            Cipher c = Cipher.getInstance("AES");
+                            c.init(Cipher.ENCRYPT_MODE, sectionKey);
                             
-                            if (localLog.exists()) {
-                                logData.append(Files.readString(localLog.toPath()));
-                            }
-                            // Adicionar nova entrada
-                            logData.append(System.currentTimeMillis()).append(",")
-                                  .append(command_Args[2]).append(",")
-                                  .append(command_Args[3]).append("\n");
-                            
-                            Files.writeString(localLog.toPath(), logData.toString());
-                            
+                            // Converter o int para bytes e cifrar
+                            byte[] valueBytes = ByteBuffer.allocate(4).putInt(value).array();
+                            byte[] encryptedValue = c.doFinal(valueBytes);
 
-                            Cipher aesCipher = Cipher.getInstance("AES");
-                            aesCipher.init(Cipher.ENCRYPT_MODE, sKey);
-
-                            byte[] encryptedVal = aesCipher.doFinal(command_Args[3].getBytes());
-
-                            outStream.writeObject(encryptedVal);
+                            outStream.writeObject(encryptedValue);
                             outStream.flush();
 
-                            System.out.println(inStream.readObject());
-
-                        } catch (IOException | ClassNotFoundException | InvalidKeyException | KeyStoreException | NoSuchAlgorithmException | UnrecoverableKeyException | CertificateException | BadPaddingException | IllegalBlockSizeException | NoSuchPaddingException e) {
-                            System.err.println("Erro na criptografia: " + e.getMessage());
+                            System.out.println((String) inStream.readObject()); // Imprime o OK final do servidor
                         }
                     } else {
-                        // Se não for byte[], é uma mensagem de erro
-                        System.out.println("Erro do servidor: " + response);
+                        System.out.println(response); // Mensagens de erro do servidor como NOPERM ou NOHM
                     }
+                } catch (Exception e) {
+                    System.err.println("Erro no comando EC: " + e.getMessage());
                 }
               }
               case "RT" -> {
@@ -615,5 +618,4 @@ public class SpertaClient {
     }
     return aesKey;
   }
-
 }

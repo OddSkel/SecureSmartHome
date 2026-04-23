@@ -34,94 +34,76 @@ import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 
 public class SpertaServer {
+	private static final int MAX_CLIENTS = 3;
+	private static final Semaphore signal = new Semaphore(MAX_CLIENTS);
+	private static final Semaphore command_signal = new Semaphore(1);
+	private String serverPwdCifra;
+	public static void main(String[] args) {
+		System.out.println("[SERVER] Starting server...");
+		SpertaServer server = new SpertaServer();
+		
+		// Agora aceita os 4 argumentos: porta, pwd-cifra, keystore, pwd-keystore
+		if (args.length == 4) {
+			server.startServer(Integer.parseInt(args[0]), args[1], args[2], args[3]);
+		} else if (args.length == 0) {
+			// Caso não passes nada, usa valores por omissão (ajusta se necessário)
+			server.startServer(22345, "default_pwd", "Keys/keystore.server", "123456");
+		} else {
+			System.out.println("Usage: java SpertaServer <port> <password-cifra> <keystore> <password-keystore>");
+			System.exit(-1);
+		}
+	}
 
-    private static final int MAX_CLIENTS = 3;
-    private static final Semaphore signal = new Semaphore(MAX_CLIENTS);
-    private static final Semaphore command_signal = new Semaphore(1);
+	public void startServer (int port, String pwdCifra, String keystorePath, String keystorePwd){
+		try(ServerSocket sSoc = new ServerSocket(port)) {
+			System.out.println("[SERVER] Server started on port " + port);
+			while(true) {
+				try {
+					Socket inSoc = sSoc.accept();
+					SecureRandom secure_random = new SecureRandom();
+					ObjectOutputStream check = new ObjectOutputStream(inSoc.getOutputStream());
+					ObjectInputStream rec = new ObjectInputStream(inSoc.getInputStream());
 
-    //public static void main(String[] args) {
-    //System.out.println("[SERVER] Starting server...");
-    //SpertaServer server = new SpertaServer();
-    //switch (args.length) {
-    //case 1 -> server.startServer(Integer.parseInt(args[0]));
-    //case 0 -> server.startServer(22345);
-    //default -> {
-    //System.out.println("Usage: java SpertaServer <port>");
-    //System.exit(-1);
-    //}
-    //}
-    //}
-    public static void main(String[] args) {
-        System.out.println("[SERVER] Starting server...");
-        SpertaServer server = new SpertaServer();
-        switch (args.length) {
-            case 4 -> {
-                int port = Integer.parseInt(args[0]);
-                String pwdCifra = args[1];
-                String keystore = args[2];
-                String pwdKeystore = args[3];
-                server.startServer(port, pwdCifra, keystore, pwdKeystore);
-            }
-            case 0 ->
-                server.startServer(22345, "defaultPwd", "Keys/keystore.server", "123456");
-            default -> {
-                System.out.println("Usage: java SpertaServer <port> <password-cifra> <keystore> <password-keystore>");
-                System.exit(-1);
-            }
-        }
-    }
+					byte[] nounce = new byte[8];
+					secure_random.nextBytes(nounce);
+					check.writeObject(nounce);
+					check.flush();
 
-    public void startServer(int port, String pwdCifra, String ksPath, String ksPwd) {
-        try (ServerSocket sSoc = new ServerSocket(port)) {
-            System.out.println("[SERVER] Server started on port " + port);
-            while (true) {
-                try {
-                    Socket inSoc = sSoc.accept();
-                    SecureRandom secure_random = new SecureRandom();
-                    ObjectOutputStream check = new ObjectOutputStream(inSoc.getOutputStream());
-                    ObjectInputStream rec = new ObjectInputStream(inSoc.getInputStream());
-                    byte[] nounce = new byte[8];
-                    secure_random.nextBytes(nounce);
-                    check.writeObject(nounce);
-                    check.flush();
-                    byte[] receive = (byte[]) rec.readObject();
-                    if (!Arrays.equals(nounce, receive)) {
-                        check.writeObject("NOK-ATTEST");
-                        check.flush();
-                        inSoc.close();
-                        return;
-                    }
-                    check.writeObject("OK-ATTEST");
-                    check.flush();
-                    signal.acquire();
-                    ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check, rec, pwdCifra, ksPath, ksPwd);
-                    newServerThread.start();
-                } catch (IOException e) {
-                    System.err.println(e.getMessage());
-                    System.exit(-1);
-                } catch (InterruptedException | ClassNotFoundException e1) {
-                    Thread.currentThread().interrupt();
-                    System.err.println(e1.getMessage());
-                    System.exit(-1);
-                }
+					byte [] receive = (byte[]) rec.readObject();
+					if (!Arrays.equals(nounce, receive)) {
+						check.writeObject("NOK-ATTEST");
+						check.flush();
+						inSoc.close();
+						continue;
+					}
+					check.writeObject("OK-ATTEST");
+					check.flush();
 
-            }
-        } catch (IOException e) {
-            System.err.println(e.getMessage());
-            System.exit(-1);
-        }
-    }
+					signal.acquire();
+					ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check, rec, pwdCifra);
+                	newServerThread.start();
+				} catch (IOException e) {
+					System.err.println(e.getMessage());
+					System.exit(-1);
+				} catch (InterruptedException | ClassNotFoundException e1) {
+					Thread.currentThread().interrupt();
+					System.err.println(e1.getMessage());
+					System.exit(-1);
+				}
+			
+			}
+		} catch (IOException e) {
+			System.err.println(e.getMessage());
+			System.exit(-1);
+		}
+	}
 }
 
 class ServerThread extends Thread {
-
-    private Socket socket = null;
-    private Semaphore signal = null;
-    private Semaphore command = null;
-
-    private String serverPwdCifra;
-    private String serverKsPath;
-    private String serverKsPwd;
+	private Socket socket = null;
+	private Semaphore signal = null;
+	private Semaphore command = null;
+	private String serverPwdCifra;
 
     private File users, homes, homesFolder;
     private String user, pwd, trustore, pass_truststore, keystore, pass_keystore;
@@ -130,21 +112,15 @@ class ServerThread extends Thread {
 
     private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
 
-    ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal,
-            ObjectOutputStream out, ObjectInputStream in,
-            String pwdCifra, String ksPath, String ksPwd) {
-        this.socket = inSoc;
-        this.signal = signal;
-        this.command = command_signal;
-        this.out = out;
-        this.in = in;
-
-        this.serverPwdCifra = pwdCifra;
-        this.serverKsPath = ksPath;
-        this.serverKsPwd = ksPwd;
-
-        System.out.println("thread do server para cada cliente");
-    }
+	ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal, ObjectOutputStream out, ObjectInputStream in, String pwdCifra) {
+		socket = inSoc;
+		this.signal = signal;
+		command = command_signal;
+		this.out = out;
+		this.in = in;
+		serverPwdCifra = pwdCifra;
+		System.out.println("thread do server para cada cliente");
+	}
 
     @Override
     public void run() {
@@ -832,35 +808,40 @@ class ServerThread extends Thread {
     }
 
     private boolean verifyUserPermission(String homeName, String user, String section) {
-        if (checkOwner(homeName, user)) {
-            return true;
-        }
-        try (Scanner sc = new Scanner(homes)) {
-            while (sc.hasNextLine()) {
-                String line = sc.nextLine();
-                if (line.startsWith(homeName + ":")) {
-                    String[] parts = line.split(">");
-                    if (parts.length < 2) {
-                        return false;
-                    }
+		try (Scanner sc = new Scanner(homes)) {
+			while (sc.hasNextLine()) {
+				String line = sc.nextLine();
+				if (line.startsWith(homeName + ":")) {
+					String[] parts = line.split(">");
+					
+					String[] ownerData = parts[0].split(":");
+					if (ownerData.length > 1 && ownerData[1].equals(user)) {
+						return true; // O dono tem sempre acesso total
+					}
+
+					if (parts.length < 2 || parts[1].isEmpty()) return false;
 
                     String usersPart = parts[1];
                     String[] userEntries = usersPart.split("/");
 
-                    for (String entry : userEntries) {
-                        String[] userData = entry.split(":");
-                        if (userData[0].equals(user)) {
-                            String perms = userData[1];
-                            return perms.contains(section) || perms.equals("all") || section.equals("all");
-                        }
-                    }
-                }
-            }
-        } catch (IOException e) {
-            return false;
+					for (String entry : userEntries) {
+						String[] userData = entry.split(":");
+						if (userData.length > 1 && userData[0].equals(user)) {
+							String perms = userData[1];
+							return perms.contains(section) || perms.equals("all") || section.equals("all");
+						}
+					}
+				}
+			}
+		} catch (IOException e) { 
+            return false; 
         }
-        return false;
-    }
+		return false;
+	}
+
+
+
+
 
     private void updateGlobalDeviceLog(String homeName, String deviceName, String lastValue) {
         File globalLog = new File("homes/" + homeName + "/devicesLog.txt");
