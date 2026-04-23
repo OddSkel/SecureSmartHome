@@ -7,16 +7,20 @@ import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.security.Key;
 import java.security.KeyException;
 import java.security.KeyStore;
+import java.security.PrivateKey;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.util.Arrays;
+import java.util.Base64;
+import java.util.List;
 import java.util.Scanner;
 import javax.crypto.Cipher;
 import javax.crypto.CipherInputStream;
@@ -24,11 +28,19 @@ import javax.crypto.CipherOutputStream;
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 
+import javax.crypto.Cipher;
+import javax.crypto.SecretKey;
+
 public class SpertaClient {
   private int port;
   private String host;
-  private String user, pwd, trustore, pass_truststore, keystore, pass_keystore;
+  private String user, pwd;
 
+  private String truststore;      
+  private String pass_truststore;
+
+  private String keystore;
+  private String pass_keystore;
   private static final String COMMAND_LIST =
   """
   Available Commands:
@@ -43,22 +55,24 @@ public class SpertaClient {
   private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
 
   public static void main(String[] args) {
-    if (args.length != 7 ) {
-      System.out.println( "Usage: java SpertaClient <host:port> <truststore> <password-truststore>" +
-                          "<keystore> <password-keystore> <user-id> <password>");
+    if (args.length != 7) {
+      System.out.println("Usage: java SpertaClient <host:port> <truststore> <password-truststore> <keystore> <password-keystore> <user-id> <password>");
       System.exit(-1);
     }
 
     String[] serverAddress = args[0].split(":");
 
     SpertaClient client = new SpertaClient();
-    client.trustore = args[1];
-    client.pass_truststore = args[2];
-    client.keystore = args[3];
-    client.pass_keystore = args[4];
-    client.user = args[5];
-    client.pwd = args[6];
+    
     client.host = serverAddress[0];
+    client.port = (serverAddress.length == 2) ? Integer.parseInt(serverAddress[1]) : 22345;
+    client.truststore = args[1];          
+    client.pass_truststore = args[2];   
+    client.keystore = args[3];         
+    client.pass_keystore = args[4];     
+    client.user = args[5];              
+    client.pwd = args[6];
+
     switch (serverAddress.length) {
       case 2 -> client.port = Integer.parseInt(serverAddress[1]);
       case 1 -> client.port = 22345;
@@ -83,43 +97,13 @@ public class SpertaClient {
         outStream.flush();
         String integrity_check = (String) inStream.readObject();
         if (integrity_check.equals("OK-ATTEST")) {
-          outStream.writeObject(trustore);
+          outStream.writeObject(truststore);
           outStream.writeObject(pass_truststore);
           outStream.writeObject(keystore);
           outStream.writeObject(pass_keystore);
           outStream.writeObject(user);
           outStream.writeObject(pwd);
           outStream.flush();
-
-          String serverMsg = (String) inStream.readObject();
-          if (serverMsg.equals("SEND_CERT")) {
-            try {
-              KeyStore ks = KeyStore.getInstance("JCEKS");
-              ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
-              Certificate cert = ks.getCertificate("keyrsa");
-              if (cert == null) {
-                System.err.println("No certificate found for alias: " + user);
-                System.exit(-1);
-              }
-
-              File f = new File("Certs", user + ".cer");
-              Files.write(f.toPath(), cert.getEncoded());
-
-              outStream.writeLong(f.length());
-              outStream.flush();
-              try(FileInputStream certificate = new FileInputStream(f)){
-                int bytesToRead;
-                byte [] buf = new byte[1024];
-                while((bytesToRead = certificate.read(buf, 0, buf.length))!= -1){
-                  outStream.write(buf, 0, bytesToRead);
-                  outStream.flush();
-                }
-              }
-            } catch (IOException | KeyStoreException | NoSuchAlgorithmException | CertificateException e) {
-              System.err.println(e.getMessage());
-              System.exit(-1);
-            }
-          }
           checkSResp(inStream, outStream, user_input);
           
           while(true) {
@@ -152,24 +136,26 @@ public class SpertaClient {
                 }
               }
               case "ADD" -> {
+                if (command_Args.length != 4) {
+                  System.out.println("Usage: ADD <user> <home> <secção>");
+                  break;
+                } 
                 if (!Arrays.asList(PERMS).contains(command_Args[3])) {
                   System.out.println("Device doesn't exist. Devices available: " + Arrays.toString(PERMS));
                   break;
                 }
-                if (command_Args.length != 4) {
-                  System.out.println("Usage: ADD <user> <home> <secção>");
-                } else {
-                  outStream.writeObject(command_Args);
-                  outStream.flush();
-                  String server_Response = (String) inStream.readObject();
-                  switch (server_Response) {
-                      case "USER_ADDED" -> System.out.println("OK");
-                      case "USER_NOT_FOUND" -> System.out.println("NOUSER");
-                      case "HOME_NOT_FOUND" -> System.out.println("NOHM");
-                      case "NO_USER_PERMS" -> System.out.println("NOPERM");
-                      default -> System.out.println("NOK");
-                  }
+                
+                outStream.writeObject(command_Args);
+                outStream.flush();
+                String server_Response = (String) inStream.readObject();
+                switch (server_Response) {
+                    case "USER_ADDED" -> System.out.println("OK");
+                    case "USER_NOT_FOUND" -> System.out.println("NOUSER");
+                    case "HOME_NOT_FOUND" -> System.out.println("NOHM");
+                    case "NO_USER_PERMS" -> System.out.println("NOPERM");
+                    default -> System.out.println("NOK");
                 }
+              
               }
               case "RD" -> {
                 if (command_Args.length != 3) {
@@ -235,20 +221,62 @@ public class SpertaClient {
               }
               case "EC" -> {
                 if (command_Args.length != 4) {
-                    System.out.println("Erro: Use EC <casa> <dispositivo> <valor>");
-                } else {
+                    System.out.println("Usage: EC <hm> <d> <int>");
+                    break;
+                } 
+
+                int value;
+                try {
+                    value = Integer.parseInt(command_Args[3]);
+                    if (value < 0 || value > 600) {
+                        System.out.println("NOK"); // Valor fora dos limites, aborta
+                        break; // Faz com que volte a pedir o "Insert Command:"
+                    }
+                } catch (NumberFormatException e) {
+                    System.out.println("NOK"); // Não é um número inteiro válido
+                    break;
+                }
+
+                // 2. Se o valor for válido, prossegue com a comunicação normal
+                try {
+                    // Enviar o comando inicial
                     outStream.writeObject(command_Args);
                     outStream.flush();
-                    String response = (String) inStream.readObject();
-    
-                    switch (response) {
-                        case "OK" -> System.out.println("OK");
-                        case "NOK" -> System.out.println("NOK # valor inválido");
-                        case "NOHM" -> System.out.println("NOHM # esta casa não existe");
-                        case "NOD" -> System.out.println("NOD # este dispositivo não existe");
-                        case "NOPERM" -> System.out.println("NOPERM # sem permissões ");
-                        default -> System.out.println("Resposta inesperada: " + response);
+
+                    Object response = inStream.readObject();
+                    
+                    // O servidor envia a chave da secção cifrada
+                    if (response instanceof byte[]) {
+                        byte[] keyBytes = (byte[]) response;
+
+                        // Criar ficheiro temporário para a tua função getKey(File f)
+                        File tempKey = new File("temp_ec.key");
+                        try (FileOutputStream fos = new FileOutputStream(tempKey)) {
+                            fos.write(keyBytes);
+                        }
+                        // Usar a tua função para fazer o unwrap da chave AES
+                        Key sectionKey = getKey(tempKey); 
+                        tempKey.delete();
+                        
+                        if (sectionKey != null) {
+                            // Passo c: Cifrar o valor e enviar (já não precisamos de verificar limites aqui)
+                            Cipher c = Cipher.getInstance("AES");
+                            c.init(Cipher.ENCRYPT_MODE, sectionKey);
+                            
+                            // Converter o int para bytes e cifrar
+                            byte[] valueBytes = ByteBuffer.allocate(4).putInt(value).array();
+                            byte[] encryptedValue = c.doFinal(valueBytes);
+
+                            outStream.writeObject(encryptedValue);
+                            outStream.flush();
+
+                            System.out.println((String) inStream.readObject()); // Imprime o OK final do servidor
+                        }
+                    } else {
+                        System.out.println(response); // Mensagens de erro do servidor como NOPERM ou NOHM
                     }
+                } catch (Exception e) {
+                    System.err.println("Erro no comando EC: " + e.getMessage());
                 }
               }
               case "RT" -> {
@@ -282,38 +310,72 @@ public class SpertaClient {
                 }
               }
               case "RH" -> {
-                  if (command_Args.length != 3) {
-                    System.out.println("Usage: RH <hm> <d>");
-                  } else {
-                      outStream.writeObject(command_Args);
-                      outStream.flush();
-                      
-                      Object responseObj = inStream.readObject();
-                      String response = (String) responseObj;
-    
-                      if (response.equals("OK")) {
-                          long fileSize = inStream.readLong();
-                          System.out.println("OK, " + fileSize + " (long), seguido de " + fileSize + " bytes de dados.");
-                          String fileName = command_Args[1] + "_" + command_Args[2] + ".csv";
-                          try (FileOutputStream fos = new FileOutputStream(fileName)) {
-                              byte[] buffer = new byte[1024];
-                              long remaining = fileSize;
-                              int bytesRead;
-                              while (remaining > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min((long) buffer.length, remaining))) != -1) {
-                                  fos.write(buffer, 0, bytesRead);
-                                  remaining -= bytesRead;
-                              }
-                          }
-                      } else {
-                          switch (response) {
-                            case "NOHM" -> System.out.println("NOHM # esta casa não existe");
-                            case "NOD" -> System.out.println("NOD # dispositivo não existe");
-                            case "NOPERM" -> System.out.println("NOPERM # sem permissões");
-                            case "NODATA" -> System.out.println("NODATA # sem dados");
-                            default -> System.out.println(response);
-                          }
+                    if (command_Args.length != 4) {
+                      System.out.println("Usage: EC <hm> <d> <int>");
+                      break;
+                    }
+
+                    // 1. Validar o valor de <int> (0, 1, ou 2 a 600)
+                    try {
+                      int intValue = Integer.parseInt(command_Args[3]);
+                      if (intValue < 0 || intValue > 600) {
+                        System.out.println("NOK");
+                        break;
                       }
-                  }
+                    } catch (NumberFormatException e) {
+                      System.out.println("NOK");
+                      break;
+                    }
+                    
+                    // Enviar pedido inicial ao servidor
+                    outStream.writeObject(command_Args);
+                    outStream.flush();
+
+                    String server_Response = (String) inStream.readObject();
+                    switch (server_Response) {
+                      case "OK" -> {
+                        try {
+                          //Receber a chave da secção cifrada (Wrapped Key)
+                          byte[] wrappedKey = (byte[]) inStream.readObject();
+
+                          //Carregar a Keystore para obter a Chave Privada
+                          File kS = new File("Keys", keystore);
+                          KeyStore kstore = KeyStore.getInstance("JCEKS");
+                          try (FileInputStream kfile = new FileInputStream(kS)) {
+                            kstore.load(kfile, pass_keystore.toCharArray());
+                          }
+                          PrivateKey pk = (PrivateKey) kstore.getKey("keyrsa", pass_keystore.toCharArray());
+
+                          //Decifrar a Chave de Secção (AES) com a Privada (RSA)
+                          Cipher rsaCipher = Cipher.getInstance("RSA");
+                          rsaCipher.init(Cipher.UNWRAP_MODE, pk);
+                          SecretKey sectionKey = (SecretKey) rsaCipher.unwrap(wrappedKey, "AES", Cipher.SECRET_KEY);
+
+                          //Preparar os dados: "timestamp,dispositivo:valor"
+                          String payload = System.currentTimeMillis() + "," + command_Args[2] + ":" + command_Args[3];
+                          
+                          //Cifrar o payload com AES
+                          Cipher aesCipher = Cipher.getInstance("AES");
+                          aesCipher.init(Cipher.ENCRYPT_MODE, sectionKey);
+                          byte[] encryptedPayload = aesCipher.doFinal(payload.getBytes());
+
+                          //Enviar os bytes cifrados ao servidor
+                          outStream.writeObject(encryptedPayload);
+                          outStream.flush();
+
+                          //Confirmar se o servidor guardou com sucesso
+                          String finalStatus = (String) inStream.readObject();
+                          System.out.println(finalStatus); // Imprime OK_EC ou NOK
+
+                        } catch (Exception e) {
+                          System.out.println("NOK");
+                        }
+                      }
+                      case "NOHM" -> System.out.println("NOHM # no such house");
+                      case "NOPERM" -> System.out.println("NOPERM # no permissions");
+                      case "NOKEY" -> System.out.println("NOKEY # error fetching section key");
+                      default -> System.out.println("NOK");
+                    }
                 }
               default -> {
                 outStream.writeObject(command_Args);
@@ -464,7 +526,21 @@ public class SpertaClient {
           pwd = sc.nextLine();
           out.writeObject(pwd);
           out.flush();
-        } else {
+        } else if (serverMsg.equals("SEND_CERT")) {
+          // O servidor pediu o certificado, vamos enviá-lo
+          File certFile = new File("Certs/" + user + ".cer");
+          if (certFile.exists()) {
+              out.writeLong(certFile.length()); // Envia o tamanho
+              byte[] content = Files.readAllBytes(certFile.toPath());
+              out.write(content); // Envia o conteúdo
+              out.flush();
+          } else {
+              System.err.println("Erro: Certificado não encontrado em " + certFile.getPath());
+              out.writeLong(0);
+              out.flush();
+          }
+        } else if (serverMsg.equals("OK_USER") || serverMsg.equals("OK_NEW_USER")) {
+          // Só consideramos o user autenticado nestes dois casos explícitos
           userOk = true;
         }
       }
@@ -472,4 +548,6 @@ public class SpertaClient {
       System.err.println(e.getMessage());
     }
   }
+
+
 }

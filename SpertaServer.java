@@ -35,26 +35,32 @@ import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
-
+import java.nio.ByteBuffer;
+import java.nio.file.Path;
+import java.security.MessageDigest;
 
 public class SpertaServer {
 	private static final int MAX_CLIENTS = 3;
 	private static final Semaphore signal = new Semaphore(MAX_CLIENTS);
 	private static final Semaphore command_signal = new Semaphore(1);
+	private String serverPwdCifra;
 	public static void main(String[] args) {
-    System.out.println("[SERVER] Starting server...");
+		System.out.println("[SERVER] Starting server...");
 		SpertaServer server = new SpertaServer();
-            switch (args.length) {
-                case 1 -> server.startServer(Integer.parseInt(args[0]));
-                case 0 -> server.startServer(22345);
-                default -> {
-                    System.out.println("Usage: java SpertaServer <port>");
-                    System.exit(-1);
-                }
-            }
+		
+		// Agora aceita os 4 argumentos: porta, pwd-cifra, keystore, pwd-keystore
+		if (args.length == 4) {
+			server.startServer(Integer.parseInt(args[0]), args[1], args[2], args[3]);
+		} else if (args.length == 0) {
+			// Caso não passes nada, usa valores por omissão (ajusta se necessário)
+			server.startServer(22345, "default_pwd", "Keys/keystore.server", "123456");
+		} else {
+			System.out.println("Usage: java SpertaServer <port> <password-cifra> <keystore> <password-keystore>");
+			System.exit(-1);
+		}
 	}
 
-	public void startServer (int port){
+	public void startServer (int port, String pwdCifra, String keystorePath, String keystorePwd){
 		try(ServerSocket sSoc = new ServerSocket(port)) {
 			System.out.println("[SERVER] Server started on port " + port);
 			while(true) {
@@ -63,22 +69,25 @@ public class SpertaServer {
 					SecureRandom secure_random = new SecureRandom();
 					ObjectOutputStream check = new ObjectOutputStream(inSoc.getOutputStream());
 					ObjectInputStream rec = new ObjectInputStream(inSoc.getInputStream());
+
 					byte[] nounce = new byte[8];
 					secure_random.nextBytes(nounce);
 					check.writeObject(nounce);
 					check.flush();
+
 					byte [] receive = (byte[]) rec.readObject();
 					if (!Arrays.equals(nounce, receive)) {
 						check.writeObject("NOK-ATTEST");
 						check.flush();
 						inSoc.close();
-						return;
+						continue;
 					}
 					check.writeObject("OK-ATTEST");
 					check.flush();
+
 					signal.acquire();
-					ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check, rec);
-					newServerThread.start();
+					ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check, rec, pwdCifra);
+                	newServerThread.start();
 				} catch (IOException e) {
 					System.err.println(e.getMessage());
 					System.exit(-1);
@@ -100,6 +109,7 @@ class ServerThread extends Thread {
 	private Socket socket = null;
 	private Semaphore signal = null;
 	private Semaphore command = null;
+	private String serverPwdCifra;
 
 	private File users, homes, homesFolder;
 	private String user, pwd, trustore, pass_truststore, keystore, pass_keystore;
@@ -108,12 +118,13 @@ class ServerThread extends Thread {
 
 	private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
 
-	ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal, ObjectOutputStream out, ObjectInputStream in) {
+	ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal, ObjectOutputStream out, ObjectInputStream in, String pwdCifra) {
 		socket = inSoc;
 		this.signal = signal;
 		command = command_signal;
 		this.out = out;
 		this.in = in;
+		serverPwdCifra = pwdCifra;
 		System.out.println("thread do server para cada cliente");
 	}
 
@@ -157,38 +168,42 @@ class ServerThread extends Thread {
 								System.out.println("["+ user +" Thread] CREATE command received for home: " + houseName);
 								createHome(houseName);
 								try {
+									// 1. Carregar Keystore e Certificado UMA ÚNICA VEZ
+									File kS = new File("Keys", keystore);
+									FileInputStream kfile = new FileInputStream(kS);
+									KeyStore kstore = KeyStore.getInstance("JCEKS");
+									kstore.load(kfile, pass_keystore.toCharArray());
+									Certificate cert = kstore.getCertificate("keyrsa");
+									PublicKey pk = cert.getPublicKey();
+									Cipher cRSA = Cipher.getInstance("RSA");
+									cRSA.init(Cipher.WRAP_MODE, pk);
+
+									SecretKeyFactory factory = SecretKeyFactory.getInstance("PBEWithHmacSHA256AndAES_128");
+
+									// 2. Criar e Guardar a Chave da Casa (Geral)
+									KeySpec specHome = new PBEKeySpec(pwd.toCharArray(), generateSalt(), 20);
+									SecretKey tmpHome = factory.generateSecret(specHome);
+									SecretKey homeKey = new SecretKeySpec(Arrays.copyOf(tmpHome.getEncoded(), 16), "AES");
+									
+									File homeKeyFile = new File("homes/" + houseName, "key." + houseName + "." + user);
+									try(FileOutputStream keyHomeOut = new FileOutputStream(homeKeyFile)) {
+										keyHomeOut.write(cRSA.wrap(homeKey));
+									}
+
+									// 3. Criar e Guardar as Chaves das Secções (Loop)
 									for (String section : Arrays.asList(Arrays.copyOfRange(PERMS, 1, PERMS.length))) {
-										//Generate keys
-										SecretKey newkey;
-										SecretKeyFactory factory = SecretKeyFactory.getInstance("PBEWithHmacSHA256AndAES_128");
-										KeySpec spec = new PBEKeySpec(pwd.toCharArray(), generateSalt(), 20);
-										SecretKey tmp = factory.generateSecret(spec);
-										byte[] keyBytes = tmp.getEncoded();
-										byte[] aesKeyBytes = Arrays.copyOf(keyBytes, 16);
-										newkey = new SecretKeySpec(aesKeyBytes, "AES");
+										KeySpec specSec = new PBEKeySpec(pwd.toCharArray(), generateSalt(), 20);
+										SecretKey tmpSec = factory.generateSecret(specSec);
+										SecretKey secKey = new SecretKeySpec(Arrays.copyOf(tmpSec.getEncoded(), 16), "AES");
 
-										//Get Certificate
-										File kS = new File("Keys", keystore);
-										FileInputStream kfile = new FileInputStream(kS);
-										KeyStore kstore = KeyStore.getInstance("JCEKS");
-										kstore.load(kfile, pass_keystore.toCharArray());
-										Certificate cert = kstore.getCertificate("keyrsa");
-
-										//Get PK and cipher with it
-										PublicKey pk = cert.getPublicKey();
-										Cipher c = Cipher.getInstance("RSA");
-										c.init(Cipher.WRAP_MODE, pk);
-										byte[] wrappedKey = c.wrap(newkey);
-
-										//Create key file
-										File keyFile = new File("homes/" + houseName + "/" + section, "key." + houseName + "." + section + "." + user);
-										try(FileOutputStream keySection = new FileOutputStream(keyFile)){
-											keySection.write(wrappedKey);
+										File secKeyFile = new File("homes/" + houseName + "/" + section, "key." + houseName + "." + section + "." + user);
+										try(FileOutputStream keySecOut = new FileOutputStream(secKeyFile)) {
+											keySecOut.write(cRSA.wrap(secKey));
 										}
 									}
-								} catch (IOException | InvalidKeyException | KeyStoreException | NoSuchAlgorithmException | CertificateException | InvalidKeySpecException | IllegalBlockSizeException | NoSuchPaddingException e) {
-									System.err.println(e.getMessage());
-									System.exit(-1);
+								} catch (Exception e) {
+									System.err.println("Erro ao gerar chaves no CREATE: " + e.getMessage());
+									e.printStackTrace();
 								}
 							}
 							case "ADD" -> {
@@ -293,50 +308,38 @@ class ServerThread extends Thread {
 								out.flush();
 							}
 							case "EC" -> {
-								if (client_Commands.length < 4) {
-									out.writeObject("NOK");
-									out.flush();
-									break;
-								}
-	
-								String homeNameEC = client_Commands[1];
-								String deviceName = client_Commands[2];
-								String valStr = client_Commands[3];
-	
-								if (!homeExists(homeNameEC)) {
-									out.writeObject("NOHM");
-								}
-								else if (!checkOwner(homeNameEC, user) && !verifyUserPermission(homeNameEC, user)) {
-									out.writeObject("NOPERM");
-								}
-								else {
-									try {
-										int value = Integer.parseInt(valStr);
-	
-										if (value < 0 ) {
-											out.writeObject("NOK");
-										} else {
-											if (value > 600) {
-												value = 600;
-											}
+								String hm = client_Commands[1];
+								String dev = client_Commands[2];
+								String intValue = client_Commands[3];
+								String section = dev.substring(0, 1).toUpperCase();
 
-											String division = deviceName.substring(0, 1).toUpperCase();
-											File deviceFile = new File("homes/" + homeNameEC + "/" + division + "/" + deviceName + ".txt");
-	
-											if (deviceFile.exists()) {
-												try (FileWriter fwDevice = new FileWriter(deviceFile, true)) {
-													fwDevice.write(System.currentTimeMillis() + "," + deviceName + "," + value + System.lineSeparator());
-												}
-												updateGlobalDeviceLog(homeNameEC, deviceName, String.valueOf(value));
-												
-												out.writeObject("OK");
-												System.out.println("[" + user + " Thread] EC: " + deviceName + " -> " + value);
-											} else {
-												out.writeObject("NOD");
-											}
+								if (!homeExists(hm)) {
+									out.writeObject("NOHM");
+								} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
+									out.writeObject("NOPERM");
+								} else {
+									// Envia a Chave da Secção cifrada para o cliente
+									File keyFile = new File("homes/" + hm + "/" + section, "key." + hm + "." + section + "." + user);
+									if (!keyFile.exists()) {
+										out.writeObject("NOKEY");
+									} else {
+										byte[] wrappedKey = Files.readAllBytes(keyFile.toPath());
+										out.writeObject(wrappedKey);
+										out.flush();
+
+										// Recebe o valor já cifrado pelo cliente
+										byte[] encryptedDataFromClient = (byte[]) in.readObject();
+
+										// GRAVAÇÃO DIRETA NO FICHEIRO
+										File devFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
+										try (FileOutputStream fos = new FileOutputStream(devFile, true)) { // 'true' para append
+											fos.write(encryptedDataFromClient);
+											fos.write(System.lineSeparator().getBytes()); //
 										}
-									} catch (NumberFormatException e) {
-										out.writeObject("NOK");
+
+										// Atualiza o devicesLog.txt
+										updateGlobalDeviceLog(hm, dev, intValue);
+										out.writeObject("OK");
 									}
 								}
 								out.flush();
@@ -776,21 +779,29 @@ class ServerThread extends Thread {
 				String line = sc.nextLine();
 				if (line.startsWith(homeName + ":")) {
 					String[] parts = line.split(">");
-					if (parts.length < 2) return false;
+					
+					String[] ownerData = parts[0].split(":");
+					if (ownerData.length > 1 && ownerData[1].equals(user)) {
+						return true; // O dono tem sempre acesso total
+					}
+
+					if (parts.length < 2 || parts[1].isEmpty()) return false;
 
 					String usersPart = parts[1];
 					String[] userEntries = usersPart.split("/");
 
 					for (String entry : userEntries) {
 						String[] userData = entry.split(":");
-						if (userData[0].equals(user)) {
+						if (userData.length > 1 && userData[0].equals(user)) {
 							String perms = userData[1];
 							return perms.contains(section) || perms.equals("all") || section.equals("all");
 						}
 					}
 				}
 			}
-		} catch (IOException e) { return false; }
+		} catch (IOException e) { 
+            return false; 
+        }
 		return false;
 	}
 
