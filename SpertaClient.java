@@ -8,16 +8,23 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.nio.file.Files;
+import java.security.InvalidKeyException;
 import java.security.Key;
 import java.security.KeyException;
 import java.security.KeyStore;
+import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
+import java.security.UnrecoverableKeyException;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
 import java.util.Arrays;
 import java.util.Scanner;
+import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
 import javax.crypto.CipherInputStream;
 import javax.crypto.CipherOutputStream;
+import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 
@@ -94,6 +101,37 @@ public class SpertaClient {
           outStream.writeObject(user);
           outStream.writeObject(pwd);
           outStream.flush();
+
+          String serverMsg = (String) inStream.readObject();
+          if (serverMsg.equals("SEND_CERT")) {
+            try {
+              KeyStore ks = KeyStore.getInstance("JCEKS");
+              ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
+              Certificate cert = ks.getCertificate("keyrsa");
+              if (cert == null) {
+                System.err.println("No certificate found for alias: " + user);
+                System.exit(-1);
+              }
+
+              File f = new File("Certs", user + ".cer");
+              Files.write(f.toPath(), cert.getEncoded());
+
+              outStream.writeLong(f.length());
+              outStream.flush();
+              try(FileInputStream certificate = new FileInputStream(f)){
+                int bytesToRead;
+                byte [] buf = new byte[1024];
+                while((bytesToRead = certificate.read(buf, 0, buf.length))!= -1){
+                  outStream.write(buf, 0, bytesToRead);
+                  outStream.flush();
+                }
+              }
+            } catch (IOException | KeyStoreException | NoSuchAlgorithmException | CertificateException e) {
+              System.err.println(e.getMessage());
+              System.exit(-1);
+            }
+          }
+          
           checkSResp(inStream, outStream, user_input);
           
           while(true) {
@@ -252,7 +290,7 @@ public class SpertaClient {
 
                             System.out.println(inStream.readObject());
 
-                        } catch (Exception e) {
+                        } catch (IOException | ClassNotFoundException | InvalidKeyException | KeyStoreException | NoSuchAlgorithmException | UnrecoverableKeyException | CertificateException | BadPaddingException | IllegalBlockSizeException | NoSuchPaddingException e) {
                             System.err.println("Erro na criptografia: " + e.getMessage());
                         }
                     } else {
