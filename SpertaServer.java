@@ -282,56 +282,57 @@ class ServerThread extends Thread {
                                             }
                                         }
 
-                                        String name = (String) in.readObject();
-                                        long size = in.readLong();
-                                        File deviceFile = new File(dir, name);
+										String name = (String) in.readObject();
+										byte[] newFileBytes = (byte[]) in.readObject();
+										
+										File deviceFile = new File(dir, name);
+										Files.write(deviceFile.toPath(), newFileBytes);
+									}
+									case -1 -> out.writeObject(new String[]{"NOHM"});
+									default -> throw new AssertionError();
+								}
+								out.flush();
+							}
+							case "EC" -> {
+								String hm = client_Commands[1];
+								String dev = client_Commands[2];
+								String intValue = client_Commands[3];
+								String section = dev.substring(0, 1).toUpperCase();
 
-                                        try (FileOutputStream history = new FileOutputStream(deviceFile)) {
-                                            int bytesRead;
-                                            byte[] buffer = new byte[1024];
-                                            while (size > 0 && (bytesRead = in.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
-                                                history.write(buffer, 0, bytesRead);
-                                                size -= bytesRead;
-                                            }
-                                        } catch (IOException e) {
-                                            System.err.println(e.getMessage());
-                                            System.exit(-1);
-                                        }
-                                    }
-                                    case -1 ->
-                                        out.writeObject(new String[]{"NOHM"});
-                                    default ->
-                                        throw new AssertionError();
-                                }
-                                out.flush();
-                            }
-                            case "EC" -> {
-                                String homeNameEC = client_Commands[1];
-                                String deviceName = client_Commands[2];
-                                String s = deviceName.substring(0, 1).toUpperCase();
+								if (!homeExists(hm)) {
+									out.writeObject("NOHM");
+								} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
+									out.writeObject("NOPERM");
+								} else {
+									File keyFile = new File("homes/" + hm + "/" + section, "key." + hm + "." + section + "." + user);
+									
+									if (!keyFile.exists()) {
+										out.writeObject("NOKEY");
+									} else {
+										// 1. Envia APENAS a chave ao cliente (como Objeto)
+										byte[] wrappedKey = Files.readAllBytes(keyFile.toPath());
+										out.writeObject(wrappedKey);
+										out.flush();
 
-                                if (verifyUserPermission(homeNameEC, user, s)) {
-                                    File keyFile = new File("homes/" + homeNameEC + "/" + s, "key." + homeNameEC + "." + s + "." + user);
-                                    byte[] wrappedKey = Files.readAllBytes(keyFile.toPath());
-                                    out.writeObject(wrappedKey);
-                                    out.flush();
+										// Recebe o valor já cifrado pelo cliente
+										byte[] encryptedDataFromClient = (byte[]) in.readObject();
 
-                                    byte[] encryptedValue = (byte[]) in.readObject();
-                                    String valToStore = Base64.getEncoder().encodeToString(encryptedValue);
+										// GRAVAÇÃO DIRETA NO FICHEIRO
+										File devFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
+										try (FileOutputStream fos = new FileOutputStream(devFile, true)) { // 'true' para append
+											fos.write(encryptedDataFromClient);
+											fos.write(System.lineSeparator().getBytes()); //
+										}
 
-                                    File deviceFile = new File("homes/" + homeNameEC + "/" + s + "/" + deviceName + ".txt");
-                                    try (FileWriter fwDevice = new FileWriter(deviceFile, true)) {
-                                        fwDevice.write(System.currentTimeMillis() + "," + deviceName + "," + valToStore + System.lineSeparator());
-                                    }
-
-                                    updateGlobalDeviceLog(homeNameEC, deviceName, valToStore);
-                                    out.writeObject("OK");
-                                } else {
-                                    out.writeObject("NOPERM");
-                                }
-                            }
-                            case "RT" -> {
-                                Entry<Number, String[]> result = getHistory(client_Commands[1], user);
+										// Atualiza o devicesLog.txt
+										updateGlobalDeviceLog(hm, dev, intValue);
+										out.writeObject("OK");
+									}
+								}
+								out.flush();
+							}
+							case "RT" -> {
+								Entry<Number, String[]> result = getHistory(client_Commands[1], user);
                                 if (result.getValue().length != 0 && (long) result.getKey() > 0) {
                                     File keyFile = new File("homes/" + client_Commands[1], "key."
                                             + client_Commands[1] + "." + user);
@@ -373,71 +374,54 @@ class ServerThread extends Thread {
                                     }
                                     out.flush();
                                 }
-                            }
-                            case "RH" -> {
-                                String hm = client_Commands[1];
-                                String dev = client_Commands[2];
-                                String section = dev.substring(0, 1).toUpperCase();
-
-                                if (!homeExists(hm)) {
-                                    out.writeObject("NOHM");
-                                } else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
-                                    out.writeObject("NOPERM");
-                                } else {
-                                    File logFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
-
-                                    if (!logFile.exists()) {
-                                        out.writeObject("NOD");
-                                    } else if (logFile.length() == 0) {
-                                        out.writeObject("NODATA");
-                                    } else {
-                                        // Ir buscar a Chave de Secção do utilizador para esta secção
-                                        File keyFile = new File("homes/" + hm + "/" + section, "key." + hm + "." + section + "." + user);
-
-                                        if (!keyFile.exists()) {
-                                            out.writeObject("NOKEY"); // Chave não encontrada
-                                        } else {
-                                            out.writeObject("OK");
-
-                                            // 1. Enviar a Chave de Secção cifrada
-                                            byte[] wrappedKey = Files.readAllBytes(keyFile.toPath());
-                                            out.writeObject(wrappedKey);
-
-                                            // 2. Ler e enviar o conteúdo do ficheiro de log
-                                            byte[] fileContent = Files.readAllBytes(logFile.toPath());
-                                            out.writeLong((long) fileContent.length); // Envia o tamanho
-                                            out.write(fileContent);                   // Envia o conteúdo
-                                            System.out.println("[" + user + " Thread] RH: Sent " + fileContent.length + " bytes for " + dev);
-                                        }
-                                    }
-                                }
-                                out.flush();
-                            }
-                            default ->
-                                out.writeObject("NOCOMMAND");
-                        }
-
-                    } finally {
-                        command.release();
-                    }
-                }
-            } catch (ClassNotFoundException e1) {
-                System.err.println(e1.getMessage());
-                System.exit(-1);
-            } catch (InterruptedException e) {
-                System.err.println(e.getMessage());
-                Thread.currentThread().interrupt();
-            }
-        } catch (IOException ex) {
-            System.out.println("Client disconnected!");
-        } finally {
-            signal.release();
-            try {
-                socket.close();
-            } catch (IOException ignored) {
-            }
-        }
-    }
+							}
+							case "RH" -> {
+								String hm = client_Commands[1];
+								String dev = client_Commands[2];
+								String section = dev.substring(0, 1).toUpperCase();
+	
+								if (!homeExists(hm)) {
+									out.writeObject("NOHM");
+								} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
+									out.writeObject("NOPERM");
+								} else {
+									File logFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
+									
+									if (!logFile.exists()) {
+										out.writeObject("NOD");
+									} else if (logFile.length() == 0){out.writeObject("NODATA");}
+									else{
+										byte[] fileContent = Files.readAllBytes(logFile.toPath());
+										
+										out.writeObject("OK");
+										out.writeLong((long) fileContent.length); // Envia o tamanho (LONG)
+										out.write(fileContent);                   // Envia o conteúdo
+										System.out.println("[" + user + " Thread] RH: Sent " + fileContent.length + " bytes for " + dev);
+									}
+								}
+								out.flush();
+							}
+							default -> out.writeObject("NOCOMMAND");
+						}
+						
+					} finally {
+						command.release();
+					}
+				}
+			} catch (ClassNotFoundException e1) {
+				System.err.println(e1.getMessage());
+				System.exit(-1);
+			} catch (InterruptedException e) {
+				System.err.println(e.getMessage());
+				Thread.currentThread().interrupt();
+			}
+		} catch (IOException ex) {
+			System.out.println("Client disconnected!");
+		} finally {
+			signal.release();
+			try { socket.close(); } catch (IOException ignored) {}
+		}
+	}
 
     private void authenticate(String[] args) {
         try (Scanner sc = new Scanner(users)) {

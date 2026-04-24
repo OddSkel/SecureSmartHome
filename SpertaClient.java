@@ -197,45 +197,33 @@ public class SpertaClient {
                 switch (server_Response[0]) {
                     case "OK"->{
                       File f = new File("key." + command_Args[1] + "." + command_Args[2] + "." + user);
+                      // 1. Receber a chave como Objeto
+                      byte[] keyBytes = (byte[]) inStream.readObject();
                       try(FileOutputStream key = new FileOutputStream(f)) {
-                        int bytesRead;
-                        long size = (long) inStream.readObject();
-                        byte[] buffer = new byte[1024];
-                        while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
-                          key.write(buffer, 0, bytesRead);
-                          size -= bytesRead;
-                        }
-                      }catch (IOException e) {
-                        System.err.println(e.getMessage());
-                        System.exit(-1);
+                          key.write(keyBytes);
                       }
+                      
                       File log;
                       if (!"0".equals(server_Response[1])){
-                        log = new File(server_Response[2]);
-                        long size = Long.parseLong(server_Response[1]);
-                        long filesize = size;
-                        try(FileOutputStream device = new FileOutputStream(log)) {
-                        int bytesRead;
-                        byte[] buffer = new byte[1024];
-                        while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
-                          device.write(buffer, 0, bytesRead);
-                          size -= bytesRead;
-                        }
-                      }catch (IOException e) {
-                        System.err.println(e.getMessage());
-                        System.exit(-1);
+                          log = new File(server_Response[2]);
+                          
+                          // 2. Receber o ficheiro do dispositivo como Objeto
+                          byte[] fileBytes = (byte[]) inStream.readObject();
+                          long filesize = fileBytes.length; // para passar à função decipher
+                          
+                          try(FileOutputStream device = new FileOutputStream(log)) {
+                              device.write(fileBytes);
+                          }
+                          
+                          decipher(f, log, filesize);
+                          cipher(server_Response[2], f, outStream);
+                          log.delete();
+                      } else {
+                          log = new File(command_Args[2] + "0.txt");
+                          log.createNewFile();
+                          cipher(log.getName(), f, outStream);
+                          log.delete();
                       }
-                        decipher(f,log, filesize);
-                        cipher(server_Response[2], f, outStream);
-
-                        log.delete();
-                      }else{
-                        log = new File(command_Args[2] + "0.txt");
-                        log.createNewFile();
-                        cipher(log.getName(), f, outStream);
-                        log.delete();
-                      }
-                      log.delete();
                       f.delete();
                       System.out.println("OK");
                     }
@@ -503,17 +491,20 @@ public class SpertaClient {
         }
 
         outStream.writeObject(filename);
-        outStream.writeLong(tempFile.length());
+        //outStream.writeLong(tempFile.length());
+        //outStream.flush();
+        byte[] encBytes = Files.readAllBytes(tempFile.toPath());
+        outStream.writeObject(encBytes);
         outStream.flush();
 
-        try (FileInputStream encStream = new FileInputStream(tempFile)) {
-            int bytesToRead;
-            byte[] buf = new byte[1024];
-            while ((bytesToRead = encStream.read(buf, 0, buf.length)) != -1) {
-                outStream.write(buf, 0, bytesToRead);
-                outStream.flush();
-            }
-        }
+        //try (FileInputStream encStream = new FileInputStream(tempFile)) {
+            //int bytesToRead;
+            //byte[] buf = new byte[1024];
+            //while ((bytesToRead = encStream.read(buf, 0, buf.length)) != -1) {
+                //outStream.write(buf, 0, bytesToRead);
+                //outStream.flush();
+            //}
+        //}
         tempFile.delete();
         f.delete();
     } catch (IOException | KeyException | NoSuchAlgorithmException | NoSuchPaddingException e) {
