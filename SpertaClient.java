@@ -332,6 +332,10 @@ public class SpertaClient {
                       decipher(new File(server_Response[3]), new File("devicesLog_" + command_Args[1] + ".txt"), sizeFile);
                       String [] user_devices = Arrays.copyOfRange(server_Response, 5, server_Response.length - 1);
                       handle_file(new File("devicesLog_" + command_Args[1] + ".txt"), user_devices);
+                      File f = new File(server_Response[3]);
+                      File g = new File("received_log_file.txt");
+                      g.delete();
+                      f.delete();
                       System.out.println("OK, " + server_Response[4] + " (long)." );
                     } catch (IOException e) {
                       System.err.println(e.getMessage());
