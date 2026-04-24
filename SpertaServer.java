@@ -38,6 +38,8 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import javax.crypto.CipherInputStream;
+import javax.crypto.CipherOutputStream;
 
 public class SpertaServer {
 	private static final int MAX_CLIENTS = 3;
@@ -281,7 +283,7 @@ class ServerThread extends Thread {
 							case "EC" -> {
 								String hm = client_Commands[1];
 								String dev = client_Commands[2];
-								String intValue = client_Commands[3];
+								//String intValue = client_Commands[3];
 								String section = dev.substring(0, 1).toUpperCase();
 
 								if (!homeExists(hm)) {
@@ -307,9 +309,11 @@ class ServerThread extends Thread {
 										try (FileOutputStream fos = new FileOutputStream(devFile, true)) {
 											fos.write(encryptedDataFromClient);
 										}
+										
 
 										// 4. Atualiza os logs e envia OK
-										updateGlobalDeviceLog(hm, dev, intValue);
+										//updateGlobalDeviceLog(hm, dev, intValue);
+										atualizarDevicesLogTotalmenteCifrado(hm, dev, encryptedDataFromClient);
 										out.writeObject("OK");
 									}
 								}
@@ -810,6 +814,76 @@ class ServerThread extends Thread {
 		} catch (IOException e) {
 			System.err.println("Erro ao atualizar log global.");
 		}
+	}
+
+
+	private synchronized void atualizarDevicesLogTotalmenteCifrado(String homeName, String deviceName, byte[] dadosCifradosPeloCliente) {
+		File logFile = new File("homes/" + homeName + "/devicesLog.txt");
+		Map<String, String> devices = new LinkedHashMap<>();
+		
+		// Converte os bytes cifrados do cliente para Base64 apenas para gerir em memória mais facilmente
+		String valorCifradoBase64 = Base64.getEncoder().encodeToString(dadosCifradosPeloCliente);
+
+		try {
+			// 1. OBTER A CHAVE PBE DO SERVIDOR (Cifra do Disco)
+			SecretKey pbeKey = getServerPBEKey(); // A tua função que gera a chave PBE
+			Cipher cipher = Cipher.getInstance("AES");
+			// 2. LER E DECIFRAR O FICHEIRO ATUAL PARA A MEMÓRIA
+			if (logFile.exists() && logFile.length() > 0) {
+				cipher.init(Cipher.DECRYPT_MODE, pbeKey);
+				try (FileInputStream fis = new FileInputStream(logFile);
+					CipherInputStream cis = new CipherInputStream(fis, cipher);
+					Scanner scanner = new Scanner(cis)) {
+					
+					while (scanner.hasNextLine()) {
+						String line = scanner.nextLine();
+						String[] parts = line.split(":", 2);
+						if (parts.length == 2) {
+							devices.put(parts[0], parts[1]);
+						}
+					}
+				} catch (Exception e) {
+					System.err.println("Aviso: ficheiro novo ou erro ao decifrar. " + e.getMessage());
+				}
+			}
+			// 3. ATUALIZAR O VALOR DO DISPOSITIVO (O servidor não sabe o valor real)
+			devices.put(deviceName, valorCifradoBase64);
+
+			// 4. CIFRAR TUDO E REESCREVER NO DISCO
+			cipher.init(Cipher.ENCRYPT_MODE, pbeKey);
+			try (FileOutputStream fos = new FileOutputStream(logFile, false);
+				CipherOutputStream cos = new CipherOutputStream(fos, cipher)) {
+				
+				for (Map.Entry<String, String> entry : devices.entrySet()) {
+					String line = entry.getKey() + ":" + entry.getValue() + System.lineSeparator();
+					// O cos.write vai cifrar esta string imediatamente antes de escrever no disco
+					cos.write(line.getBytes());
+				}
+			}
+			
+		} catch (Exception e) {
+			System.err.println("Erro ao processar o devicesLog: " + e.getMessage());
+			e.printStackTrace();
+		}
+	}
+
+	private SecretKey getServerPBEKey() throws Exception {
+		File saltFile = new File("pbe_salt.bin");
+		byte[] salt = new byte[16];
+		
+		// Se o salt não existir, gera um novo e guarda-o. Caso contrário, lê o existente.
+		if (saltFile.exists()) {
+			salt = Files.readAllBytes(saltFile.toPath());
+		} else {
+			new SecureRandom().nextBytes(salt);
+			Files.write(saltFile.toPath(), salt);
+		}
+		
+		SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+		
+		KeySpec spec = new PBEKeySpec(serverPwdCifra.toCharArray(), salt, 65536, 128);
+		SecretKey tmp = factory.generateSecret(spec);
+		return new SecretKeySpec(tmp.getEncoded(), "AES");
 	}
 
 }
