@@ -21,7 +21,9 @@ import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
 import javax.crypto.Cipher;
 import javax.crypto.CipherInputStream;
@@ -177,11 +179,12 @@ public class SpertaClient {
                       byte[] keyBytes = (byte[]) inStream.readObject();
                       try(FileOutputStream key = new FileOutputStream(f)) {
                           key.write(keyBytes);
-                      }            
+                      }
+                      
                       File log;
                       if (!"0".equals(server_Response[1])){
                           log = new File(server_Response[2]);
-                  
+                          
                           // 2. Receber o ficheiro do dispositivo como Objeto
                           byte[] fileBytes = (byte[]) inStream.readObject();
                           long filesize = fileBytes.length; // para passar à função decipher
@@ -212,52 +215,98 @@ public class SpertaClient {
                     System.out.println("Usage: EC <hm> <d> <int>");
                     break;
                 } 
+
                 int value;
                 try {
                     value = Integer.parseInt(command_Args[3]);
                     if (value < 0 || value > 600) {
-                        System.out.println("NOK"); // Valor fora dos limites, aborta
-                        break; // Faz com que volte a pedir o "Insert Command:"
+                        System.out.println("NOK"); 
+                        break; 
                     }
                 } catch (NumberFormatException e) {
-                    System.out.println("NOK"); // Não é um número inteiro válido
+                    System.out.println("NOK"); 
                     break;
                 }
-                // 2. Se o valor for válido, prossegue com a comunicação normal
+
                 try {
-                    // Enviar o comando inicial
                     outStream.writeObject(command_Args);
                     outStream.flush();
+
                     Object response = inStream.readObject();
                     
-                    // O servidor envia a chave da secção cifrada
-                    if (response instanceof byte[]) {
-                        byte[] keyBytes = (byte[]) response;
-
-                        // Criar ficheiro temporário para a tua função getKey(File f)
-                        File tempKey = new File("temp_ec.key");
-                        try (FileOutputStream fos = new FileOutputStream(tempKey)) {
-                            fos.write(keyBytes);
-                        }
-                        // Usar a tua função para fazer o unwrap da chave AES
-                        Key sectionKey = getKey(tempKey); 
-                        tempKey.delete();
+                    if ("OK_EC".equals(response)) {
+                        // 1. Receber e extrair a Chave da Secção
+                        byte[] sectionKeyBytes = (byte[]) inStream.readObject();
+                        File tempSecKey = new File("temp_ec_sec.key");
+                        try (FileOutputStream fos = new FileOutputStream(tempSecKey)) { fos.write(sectionKeyBytes); }
+                        Key sectionKey = getKey(tempSecKey);
+                        tempSecKey.delete();
                         
-                        if (sectionKey != null) {
-                            // Passo c: Cifrar o valor e enviar (já não precisamos de verificar limites aqui)
-                            Cipher c = Cipher.getInstance("AES");
-                            c.init(Cipher.ENCRYPT_MODE, sectionKey);
-                            // Converter o int para bytes e cifrar
-                            byte[] valueBytes = ByteBuffer.allocate(4).putInt(value).array();
-                            byte[] encryptedValue = c.doFinal(valueBytes);
+                        // 2. Receber e extrair a Chave da Casa
+                        byte[] homeKeyBytes = (byte[]) inStream.readObject();
+                        File tempHomeKey = new File("temp_ec_home.key");
+                        try (FileOutputStream fos = new FileOutputStream(tempHomeKey)) { fos.write(homeKeyBytes); }
+                        Key homeKey = getKey(tempHomeKey);
+                        tempHomeKey.delete();
+                        
+                        // 3. Receber o devicesLog cifrado do servidor
+                        byte[] encryptedLog = (byte[]) inStream.readObject();
+                        
+                        if (sectionKey != null && homeKey != null) {
+                            // --- A) Processar o devicesLog (decifrar, atualizar, cifrar) ---
+                            Map<String, String> deviceStates = new LinkedHashMap<>();
+                            
+                            if (encryptedLog.length > 0) {
+                                Cipher cipherDec = Cipher.getInstance("AES");
+                                cipherDec.init(Cipher.DECRYPT_MODE, homeKey);
+                                byte[] decryptedLog = cipherDec.doFinal(encryptedLog);
+                                String logContent = new String(decryptedLog);
+                                
+                                System.out.println("--- CONTEÚDO ATUAL DECIFRADO ---\n" + logContent + "--------------------------------");
+                                // Carregar o estado atual para o Map
+                                String[] lines = logContent.split(System.lineSeparator());
+                                for (String line : lines) {
+                                    if (line.trim().isEmpty()) continue;
+                                    String[] parts = line.split(":");
+                                    if (parts.length >= 2) {
+                                        deviceStates.put(parts[0], parts[1]);
+                                    }
+                                }
+                            }
+                            
+                            // Atualizar/Escrever apenas na linha do dispositivo específico
+                            deviceStates.put(command_Args[2], command_Args[3]);
+                            
+                            // Reconstruir o texto
+                            StringBuilder newLogContent = new StringBuilder();
+                            for (Map.Entry<String, String> entry : deviceStates.entrySet()) {
+                                newLogContent.append(entry.getKey()).append(":").append(entry.getValue()).append(System.lineSeparator());
+                            }
+                            
+                            // Cifrar o novo devicesLog com a Chave da Casa
+                            Cipher cipherEncHome = Cipher.getInstance("AES");
+                            cipherEncHome.init(Cipher.ENCRYPT_MODE, homeKey);
+                            byte[] newEncryptedLog = cipherEncHome.doFinal(newLogContent.toString().getBytes());
 
-                            outStream.writeObject(encryptedValue);
+                            // --- B) Processar o valor do dispositivo para a Secção ---
+                            Cipher cipherEncSec = Cipher.getInstance("AES");
+                            cipherEncSec.init(Cipher.ENCRYPT_MODE, sectionKey);
+                            byte[] valueBytes = ByteBuffer.allocate(4).putInt(value).array();
+                            byte[] encryptedValue = cipherEncSec.doFinal(valueBytes);
+
+                            // 4. Enviar ambos de volta ao servidor
+                            outStream.writeObject(encryptedValue); // Valor para o ficheiro base
+                            outStream.writeObject(newEncryptedLog); // O ficheiro devicesLog cifrado global
                             outStream.flush();
 
-                            System.out.println((String) inStream.readObject()); // Imprime o OK final do servidor
+                            // Imprime a confirmação (OK) do Servidor
+                            System.out.println((String) inStream.readObject()); 
+                        } else {
+                            System.out.println("Erro ao obter as chaves.");
                         }
                     } else {
-                        System.out.println(response); // Mensagens de erro do servidor como NOPERM ou NOHM
+                        // Imprimir respostas de Erro (NOPERM, NOHM, NOKEY)
+                        System.out.println(response); 
                     }
                 } catch (Exception e) {
                     System.err.println("Erro no comando EC: " + e.getMessage());
