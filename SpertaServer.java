@@ -250,57 +250,28 @@ class ServerThread extends Thread {
 									case 1 -> {
 										File dir = new File("homes/" + client_Commands[1] + "/" + client_Commands[2]);
 										File[] matchingFiles = dir.listFiles((d, name) -> name.startsWith(client_Commands[2]));
+
+										File keyFile = new File(dir, "key." + client_Commands[1] + "." + client_Commands[2] + "." + user);
+										byte[] keyBytes = Files.readAllBytes(keyFile.toPath());
 										if (matchingFiles.length == 1) {
-											out.writeObject(new String[]{"OK", Long.toString(matchingFiles[0].length()), matchingFiles[0].getName()});
-											File keyFile = new File(dir, "key." + client_Commands[1] + "." + client_Commands[2] + "." + user);
-											out.writeObject(keyFile.length());
-											try(FileInputStream key = new FileInputStream(keyFile)){
-												int bytesToRead;
-												byte [] buf = new byte[1024];
-												while((bytesToRead = key.read(buf, 0, buf.length))!= -1){
-													out.write(buf, 0, bytesToRead);
-													out.flush();
-												}
-											}
-											try(FileInputStream key = new FileInputStream(matchingFiles[0])){
-												int bytesToRead;
-												byte [] buf = new byte[1024];
-												while((bytesToRead = key.read(buf, 0, buf.length))!= -1){
-													out.write(buf, 0, bytesToRead);
-													out.flush();
-												}
-											}
+											out.writeObject(new String[]{"OK", "1", matchingFiles[0].getName()});
+											out.writeObject(keyBytes);
+											
+											// 2. Enviar o ficheiro do dispositivo (como Objeto)
+											byte[] fileBytes = Files.readAllBytes(matchingFiles[0].toPath());
+											out.writeObject(fileBytes);
 											matchingFiles[0].delete();
 										}
 										else{
-											out.writeObject(new String[]{"OK", Long.toString(0)});
-											File keyFile = new File(dir, "key." + client_Commands[1] + "." + client_Commands[2] + "." + user);
-											out.writeObject(keyFile.length());
-											try(FileInputStream key = new FileInputStream(keyFile)){
-												int bytesToRead;
-												byte [] buf = new byte[1024];
-												while((bytesToRead = key.read(buf, 0, buf.length))!= -1){
-													out.write(buf, 0, bytesToRead);
-													out.flush();
-												}
-											}
+											out.writeObject(new String[]{"OK", "0"});
+                							out.writeObject(keyBytes);
 										}
 
 										String name = (String) in.readObject();
-										long size = in.readLong();
+										byte[] newFileBytes = (byte[]) in.readObject();
+										
 										File deviceFile = new File(dir, name);
-
-										try(FileOutputStream history = new FileOutputStream(deviceFile)) {
-											int bytesRead;
-											byte[] buffer = new byte[1024];
-											while(size > 0 && (bytesRead = in.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
-												history.write(buffer, 0, bytesRead);
-												size -= bytesRead;
-											}
-										} catch (IOException e) {
-											System.err.println(e.getMessage());
-											System.exit(-1);
-										}
+										Files.write(deviceFile.toPath(), newFileBytes);
 									}
 									case -1 -> out.writeObject(new String[]{"NOHM"});
 									default -> throw new AssertionError();
@@ -318,26 +289,26 @@ class ServerThread extends Thread {
 								} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
 									out.writeObject("NOPERM");
 								} else {
-									// Envia a Chave da Secção cifrada para o cliente
 									File keyFile = new File("homes/" + hm + "/" + section, "key." + hm + "." + section + "." + user);
+									
 									if (!keyFile.exists()) {
 										out.writeObject("NOKEY");
 									} else {
+										// 1. Envia APENAS a chave ao cliente (como Objeto)
 										byte[] wrappedKey = Files.readAllBytes(keyFile.toPath());
 										out.writeObject(wrappedKey);
 										out.flush();
 
-										// Recebe o valor já cifrado pelo cliente
+										// 2. RECEBE do cliente o valor já cifrado
 										byte[] encryptedDataFromClient = (byte[]) in.readObject();
 
-										// GRAVAÇÃO DIRETA NO FICHEIRO
+										// 3. Grava o valor cifrado no ficheiro do dispositivo (sem quebras de linha!)
 										File devFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
-										try (FileOutputStream fos = new FileOutputStream(devFile, true)) { // 'true' para append
+										try (FileOutputStream fos = new FileOutputStream(devFile, true)) {
 											fos.write(encryptedDataFromClient);
-											fos.write(System.lineSeparator().getBytes()); //
 										}
 
-										// Atualiza o devicesLog.txt
+										// 4. Atualiza os logs e envia OK
 										updateGlobalDeviceLog(hm, dev, intValue);
 										out.writeObject("OK");
 									}
@@ -373,28 +344,38 @@ class ServerThread extends Thread {
 								String hm = client_Commands[1];
 								String dev = client_Commands[2];
 								String section = dev.substring(0, 1).toUpperCase();
-	
+
 								if (!homeExists(hm)) {
 									out.writeObject("NOHM");
 								} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
 									out.writeObject("NOPERM");
 								} else {
 									File logFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
+									File keyFile = new File("homes/" + hm + "/" + section, "key." + hm + "." + section + "." + user);
 									
 									if (!logFile.exists()) {
 										out.writeObject("NOD");
-									} else if (logFile.length() == 0){out.writeObject("NODATA");}
-									else{
-										byte[] fileContent = Files.readAllBytes(logFile.toPath());
-										
+									} else if (!keyFile.exists()) {
+										out.writeObject("NOKEY");
+									} else if (logFile.length() == 0) {
+										out.writeObject("NODATA");
+									} else {
 										out.writeObject("OK");
-										out.writeLong((long) fileContent.length); // Envia o tamanho (LONG)
-										out.write(fileContent);                   // Envia o conteúdo
-										System.out.println("[" + user + " Thread] RH: Sent " + fileContent.length + " bytes for " + dev);
+										
+										// 1. Enviar a chave (como Objeto)
+										byte[] wrappedKey = Files.readAllBytes(keyFile.toPath());
+										out.writeObject(wrappedKey);
+										
+										// 2. Enviar o ficheiro histórico todo de uma vez (como Objeto)
+										byte[] fileContent = Files.readAllBytes(logFile.toPath());
+										out.writeObject(fileContent);
+										
+										System.out.println("[" + user + " Thread] RH: Enviada chave e " + fileContent.length + " bytes para " + dev);
 									}
 								}
 								out.flush();
 							}
+
 							default -> out.writeObject("NOCOMMAND");
 						}
 						

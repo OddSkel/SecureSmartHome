@@ -16,6 +16,7 @@ import java.security.PrivateKey;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
+import java.security.GeneralSecurityException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.util.Arrays;
@@ -172,45 +173,33 @@ public class SpertaClient {
                 switch (server_Response[0]) {
                     case "OK"->{
                       File f = new File("key." + command_Args[1] + "." + command_Args[2] + "." + user);
+                      // 1. Receber a chave como Objeto
+                      byte[] keyBytes = (byte[]) inStream.readObject();
                       try(FileOutputStream key = new FileOutputStream(f)) {
-                        int bytesRead;
-                        long size = (long) inStream.readObject();
-                        byte[] buffer = new byte[1024];
-                        while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
-                          key.write(buffer, 0, bytesRead);
-                          size -= bytesRead;
-                        }
-                      }catch (IOException e) {
-                        System.err.println(e.getMessage());
-                        System.exit(-1);
+                          key.write(keyBytes);
                       }
+                      
                       File log;
                       if (!"0".equals(server_Response[1])){
-                        log = new File(server_Response[2]);
-                        long size = Long.parseLong(server_Response[1]);
-                        long filesize = size;
-                        try(FileOutputStream device = new FileOutputStream(log)) {
-                        int bytesRead;
-                        byte[] buffer = new byte[1024];
-                        while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
-                          device.write(buffer, 0, bytesRead);
-                          size -= bytesRead;
-                        }
-                      }catch (IOException e) {
-                        System.err.println(e.getMessage());
-                        System.exit(-1);
+                          log = new File(server_Response[2]);
+                          
+                          // 2. Receber o ficheiro do dispositivo como Objeto
+                          byte[] fileBytes = (byte[]) inStream.readObject();
+                          long filesize = fileBytes.length; // para passar à função decipher
+                          
+                          try(FileOutputStream device = new FileOutputStream(log)) {
+                              device.write(fileBytes);
+                          }
+                          
+                          decipher(f, log, filesize);
+                          cipher(server_Response[2], f, outStream);
+                          log.delete();
+                      } else {
+                          log = new File(command_Args[2] + "0.txt");
+                          log.createNewFile();
+                          cipher(log.getName(), f, outStream);
+                          log.delete();
                       }
-                        decipher(f,log, filesize);
-                        cipher(server_Response[2], f, outStream);
-
-                        log.delete();
-                      }else{
-                        log = new File(command_Args[2] + "0.txt");
-                        log.createNewFile();
-                        cipher(log.getName(), f, outStream);
-                        log.delete();
-                      }
-                      log.delete();
                       f.delete();
                       System.out.println("OK");
                     }
@@ -310,71 +299,85 @@ public class SpertaClient {
                 }
               }
               case "RH" -> {
-                    if (command_Args.length != 4) {
-                      System.out.println("Usage: EC <hm> <d> <int>");
-                      break;
-                    }
+                    if (command_Args.length != 3) {
+                        System.out.println("Usage: RH <hm> <d>");
+                    } else {
+                        outStream.writeObject(command_Args);
+                        outStream.flush();
+                        
+                        Object responseObj = inStream.readObject();
+                        String response = (String) responseObj;
 
-                    // 1. Validar o valor de <int> (0, 1, ou 2 a 600)
-                    try {
-                      int intValue = Integer.parseInt(command_Args[3]);
-                      if (intValue < 0 || intValue > 600) {
-                        System.out.println("NOK");
-                        break;
-                      }
-                    } catch (NumberFormatException e) {
-                      System.out.println("NOK");
-                      break;
-                    }
-                    
-                    // Enviar pedido inicial ao servidor
-                    outStream.writeObject(command_Args);
-                    outStream.flush();
+                        if (response.equals("OK")) {
+                            try {
+                                byte[] wrappedKey = (byte[]) inStream.readObject();
+                                File tempKey = new File("temp_rh.key");
+                                try (FileOutputStream fos = new FileOutputStream(tempKey)) {
+                                    fos.write(wrappedKey);
+                                }
+                                Key sectionKey = getKey(tempKey);
+                                tempKey.delete();
 
-                    String server_Response = (String) inStream.readObject();
-                    switch (server_Response) {
-                      case "OK" -> {
-                        try {
-                          //Receber a chave da secção cifrada (Wrapped Key)
-                          byte[] wrappedKey = (byte[]) inStream.readObject();
+                                if (sectionKey != null) {
+                                    byte[] encryptedFileContent = (byte[]) inStream.readObject();
+                                    System.out.println("OK, recebidos " + encryptedFileContent.length + " bytes. A gerar CSV...");
 
-                          //Carregar a Keystore para obter a Chave Privada
-                          File kS = new File("Keys", keystore);
-                          KeyStore kstore = KeyStore.getInstance("JCEKS");
-                          try (FileInputStream kfile = new FileInputStream(kS)) {
-                            kstore.load(kfile, pass_keystore.toCharArray());
-                          }
-                          PrivateKey pk = (PrivateKey) kstore.getKey("keyrsa", pass_keystore.toCharArray());
+                                    String fileName = command_Args[1] + "_" + command_Args[2] + ".csv";
+                                    try (FileWriter fw = new FileWriter(fileName)) {
+                                        Cipher c = Cipher.getInstance("AES");
+                                        c.init(Cipher.DECRYPT_MODE, sectionKey);
 
-                          //Decifrar a Chave de Secção (AES) com a Privada (RSA)
-                          Cipher rsaCipher = Cipher.getInstance("RSA");
-                          rsaCipher.init(Cipher.UNWRAP_MODE, pk);
-                          SecretKey sectionKey = (SecretKey) rsaCipher.unwrap(wrappedKey, "AES", Cipher.SECRET_KEY);
+                                        int index = 0;
+                                        boolean firstBlockFound = false;
+                                        int blockSize = 16;
 
-                          //Preparar os dados: "timestamp,dispositivo:valor"
-                          String payload = System.currentTimeMillis() + "," + command_Args[2] + ":" + command_Args[3];
-                          
-                          //Cifrar o payload com AES
-                          Cipher aesCipher = Cipher.getInstance("AES");
-                          aesCipher.init(Cipher.ENCRYPT_MODE, sectionKey);
-                          byte[] encryptedPayload = aesCipher.doFinal(payload.getBytes());
+                                        while (blockSize <= encryptedFileContent.length && !firstBlockFound) {
+                                            try {
+                                                byte[] chunk = Arrays.copyOfRange(encryptedFileContent, 0, blockSize);
+                                                byte[] decrypted = c.doFinal(chunk);
+                                                
+                                                fw.write(new String(decrypted)); 
+                                                index = blockSize;               // Atualiza o index para saltar o cabeçalho
+                                                firstBlockFound = true;
+                                            } catch (java.security.GeneralSecurityException e) {
+                                                // Deu erro de padding? A fatia era pequena demais. Aumenta 16 bytes.
+                                                blockSize += 16; 
+                                            }
+                                        }
 
-                          //Enviar os bytes cifrados ao servidor
-                          outStream.writeObject(encryptedPayload);
-                          outStream.flush();
-
-                          //Confirmar se o servidor guardou com sucesso
-                          String finalStatus = (String) inStream.readObject();
-                          System.out.println(finalStatus); // Imprime OK_EC ou NOK
-
-                        } catch (Exception e) {
-                          System.out.println("NOK");
+                                        if (!firstBlockFound) {
+                                            System.err.println("Erro: Não foi possível decifrar a linha inicial do ficheiro.");
+                                            return; // Sai se o ficheiro estiver totalmente corrompido logo no início
+                                        }
+                                        while (index + 16 <= encryptedFileContent.length) {
+                                            byte[] cipherChunk = Arrays.copyOfRange(encryptedFileContent, index, index + 16);
+                                            byte[] decryptedValue = c.doFinal(cipherChunk);
+                                            
+                                            // Converte de volta para Inteiro
+                                            int val = ByteBuffer.wrap(decryptedValue).getInt();
+                                            fw.write(val + "\n");
+                                            
+                                            index += 16; 
+                                        }
+                                    }
+                                    System.out.println("Histórico guardado com sucesso: " + fileName);
+                                }
+                            } catch (java.security.GeneralSecurityException e) {
+                                System.err.println("Erro de segurança: Falha na decifragem. Verifique se os dados estão corrompidos.");
+                            } catch (IOException e) {
+                                System.err.println("Erro ao processar ficheiros: " + e.getMessage());
+                            }
+                        } else {
+                            // Tratamento das mensagens de erro (NOHM, NOD, NOPERM, etc.)
+                            switch (response) {
+                                case "NOHM" -> System.out.println("NOHM # esta casa não existe");
+                                case "NOD" -> System.out.println("NOD # dispositivo não existe");
+                                case "NOPERM" -> System.out.println("NOPERM # sem permissões");
+                                case "NODATA" -> System.out.println("NODATA # sem dados");
+                                case "NOKEY" -> System.out.println("NOKEY # chave da secção inexistente para este utilizador");
+                                default -> System.out.println(response);
+                            }
                         }
-                      }
-                      case "NOHM" -> System.out.println("NOHM # no such house");
-                      case "NOPERM" -> System.out.println("NOPERM # no permissions");
-                      case "NOKEY" -> System.out.println("NOKEY # error fetching section key");
-                      default -> System.out.println("NOK");
                     }
                 }
               default -> {
@@ -431,17 +434,20 @@ public class SpertaClient {
         }
 
         outStream.writeObject(filename);
-        outStream.writeLong(tempFile.length());
+        //outStream.writeLong(tempFile.length());
+        //outStream.flush();
+        byte[] encBytes = Files.readAllBytes(tempFile.toPath());
+        outStream.writeObject(encBytes);
         outStream.flush();
 
-        try (FileInputStream encStream = new FileInputStream(tempFile)) {
-            int bytesToRead;
-            byte[] buf = new byte[1024];
-            while ((bytesToRead = encStream.read(buf, 0, buf.length)) != -1) {
-                outStream.write(buf, 0, bytesToRead);
-                outStream.flush();
-            }
-        }
+        //try (FileInputStream encStream = new FileInputStream(tempFile)) {
+            //int bytesToRead;
+            //byte[] buf = new byte[1024];
+            //while ((bytesToRead = encStream.read(buf, 0, buf.length)) != -1) {
+                //outStream.write(buf, 0, bytesToRead);
+                //outStream.flush();
+            //}
+        //}
         tempFile.delete();
         f.delete();
     } catch (IOException | KeyException | NoSuchAlgorithmException | NoSuchPaddingException e) {
