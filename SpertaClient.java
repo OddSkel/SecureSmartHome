@@ -311,15 +311,28 @@ public class SpertaClient {
                 String [] server_Response = (String []) inStream.readObject();
                 switch (server_Response[0]) {
                   case "OK" ->{
-                    System.out.println("OK, " + server_Response[1] + " (long)." );
-                    try(FileOutputStream history = new FileOutputStream(command_Args[1] + "_history.txt")) {
+                    try(FileOutputStream key = new FileOutputStream(server_Response[3]);
+                        FileOutputStream log = new FileOutputStream("devicesLog_" + command_Args[1] + ".txt")) {
                       int bytesRead;
-                      long size = Long.parseLong(server_Response[1]);
+                      long size = Long.parseLong(server_Response[2]);
                       byte[] buffer = new byte[1024];
                       while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
-                        history.write(buffer, 0, bytesRead);
+                        key.write(buffer, 0, bytesRead);
                         size -= bytesRead;
                       }
+
+                      int bytesLog;
+                      long sizeFile = Long.parseLong(server_Response[4]);
+                      buffer = new byte[1024];
+                      while(sizeFile > 0 && (bytesLog = inStream.read(buffer, 0, (int) Math.min(sizeFile, (long) buffer.length))) != -1) {
+                        log.write(buffer, 0, bytesLog);
+                        sizeFile -= bytesLog;
+                      }
+
+                      decipher(new File(server_Response[3]), new File("devicesLog_" + command_Args[1] + ".txt"), sizeFile);
+                      String [] user_devices = Arrays.copyOfRange(server_Response, 5, server_Response.length - 1);
+                      handle_file(new File("devicesLog_" + command_Args[1] + ".txt"), user_devices);
+                      System.out.println("OK, " + server_Response[4] + " (long)." );
                     } catch (IOException e) {
                       System.err.println(e.getMessage());
                       System.exit(-1);
@@ -430,6 +443,22 @@ public class SpertaClient {
       System.exit(-1);
     }
 	}
+
+  private void handle_file(File file, String[] string) {
+    File finaFile = new File(file.getName());
+    try(FileWriter fW = new FileWriter(finaFile);
+        Scanner sc = new Scanner(file)) {
+      while (sc.hasNextLine()) {
+        String[] line = sc.next().split(":");
+          if (Arrays.asList(string).contains(line[0])) {
+            fW.write(String.join(":", line) + "\n");
+          }
+        }
+    } catch (Exception e) {
+      System.err.println(e.getMessage());
+      System.exit(-1);
+    }
+}
   
   private void cipher(String decrypted_file, File key, ObjectOutputStream outStream) {
     try {
@@ -486,6 +515,39 @@ public class SpertaClient {
     }
   }
 
+  private void checkSResp(ObjectInput in, ObjectOutputStream out, Scanner sc) {
+    try{
+      boolean userOk = false;
+      while(!userOk){
+        String serverMsg = (String) in.readObject();
+        if(serverMsg.equals("WRONG_PWD")){
+          System.out.print("Inserir novamente palavra-passe: ");
+          pwd = sc.nextLine();
+          out.writeObject(pwd);
+          out.flush();
+        } else if (serverMsg.equals("SEND_CERT")) {
+          // O servidor pediu o certificado, vamos enviá-lo
+          File certFile = new File("Certs/" + user + ".cer");
+          if (certFile.exists()) {
+              out.writeLong(certFile.length()); // Envia o tamanho
+              byte[] content = Files.readAllBytes(certFile.toPath());
+              out.write(content); // Envia o conteúdo
+              out.flush();
+          } else {
+              System.err.println("Erro: Certificado não encontrado em " + certFile.getPath());
+              out.writeLong(0);
+              out.flush();
+          }
+        } else if (serverMsg.equals("OK_USER") || serverMsg.equals("OK_NEW_USER")) {
+          // Só consideramos o user autenticado nestes dois casos explícitos
+          userOk = true;
+        }
+      }
+    } catch (IOException | ClassNotFoundException e) {
+      System.err.println(e.getMessage());
+    }
+  }
+
   private void decipher(File key, File log, long size) {
     String fileName = "received_log_file.txt";
     try {
@@ -513,8 +575,6 @@ public class SpertaClient {
       System.err.println(e.getMessage());
       System.exit(-1);
     }
-    File f = new File(fileName);
-    f.delete();
   }
 
   private Key getKey(File f) {
@@ -551,39 +611,5 @@ public class SpertaClient {
     }
     return aesKey;
   }
-
-  private void checkSResp(ObjectInput in, ObjectOutputStream out, Scanner sc) {
-    try{
-      boolean userOk = false;
-      while(!userOk){
-        String serverMsg = (String) in.readObject();
-        if(serverMsg.equals("WRONG_PWD")){
-          System.out.print("Inserir novamente palavra-passe: ");
-          pwd = sc.nextLine();
-          out.writeObject(pwd);
-          out.flush();
-        } else if (serverMsg.equals("SEND_CERT")) {
-          // O servidor pediu o certificado, vamos enviá-lo
-          File certFile = new File("Certs/" + user + ".cer");
-          if (certFile.exists()) {
-              out.writeLong(certFile.length()); // Envia o tamanho
-              byte[] content = Files.readAllBytes(certFile.toPath());
-              out.write(content); // Envia o conteúdo
-              out.flush();
-          } else {
-              System.err.println("Erro: Certificado não encontrado em " + certFile.getPath());
-              out.writeLong(0);
-              out.flush();
-          }
-        } else if (serverMsg.equals("OK_USER") || serverMsg.equals("OK_NEW_USER")) {
-          // Só consideramos o user autenticado nestes dois casos explícitos
-          userOk = true;
-        }
-      }
-    } catch (IOException | ClassNotFoundException e) {
-      System.err.println(e.getMessage());
-    }
-  }
-
 
 }
