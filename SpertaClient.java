@@ -201,12 +201,11 @@ public class SpertaClient {
                       byte[] keyBytes = (byte[]) inStream.readObject();
                       try(FileOutputStream key = new FileOutputStream(f)) {
                           key.write(keyBytes);
-                      }
-                      
+                      }            
                       File log;
                       if (!"0".equals(server_Response[1])){
                           log = new File(server_Response[2]);
-                          
+                  
                           // 2. Receber o ficheiro do dispositivo como Objeto
                           byte[] fileBytes = (byte[]) inStream.readObject();
                           long filesize = fileBytes.length; // para passar à função decipher
@@ -237,7 +236,6 @@ public class SpertaClient {
                     System.out.println("Usage: EC <hm> <d> <int>");
                     break;
                 } 
-
                 int value;
                 try {
                     value = Integer.parseInt(command_Args[3]);
@@ -249,13 +247,11 @@ public class SpertaClient {
                     System.out.println("NOK"); // Não é um número inteiro válido
                     break;
                 }
-
                 // 2. Se o valor for válido, prossegue com a comunicação normal
                 try {
                     // Enviar o comando inicial
                     outStream.writeObject(command_Args);
                     outStream.flush();
-
                     Object response = inStream.readObject();
                     
                     // O servidor envia a chave da secção cifrada
@@ -275,7 +271,6 @@ public class SpertaClient {
                             // Passo c: Cifrar o valor e enviar (já não precisamos de verificar limites aqui)
                             Cipher c = Cipher.getInstance("AES");
                             c.init(Cipher.ENCRYPT_MODE, sectionKey);
-                            
                             // Converter o int para bytes e cifrar
                             byte[] valueBytes = ByteBuffer.allocate(4).putInt(value).array();
                             byte[] encryptedValue = c.doFinal(valueBytes);
