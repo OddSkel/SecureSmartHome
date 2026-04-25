@@ -98,26 +98,6 @@ public class SpertaClient {
           outStream.writeObject(pwd);
           outStream.flush();
 
-          String serverMsg = (String) inStream.readObject();
-          if (serverMsg.equals("SEND_CERT")) {
-            try {
-              KeyStore ks = KeyStore.getInstance("JCEKS");
-              ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
-              Certificate cert = ks.getCertificate("keyrsa");
-              if (cert == null) {
-                  System.err.println("No certificate found for alias: " + user);
-                  System.exit(-1);
-              }
-
-              // ✅ Send as object to match server's readObject()
-              outStream.writeObject(cert.getEncoded());
-              outStream.flush();
-            } catch (Exception e) {
-              System.err.println(e.getMessage());
-              System.exit(-1);
-            }
-          }
-
           checkSResp(inStream, outStream, user_input);
           
           while(true) {
@@ -224,17 +204,16 @@ public class SpertaClient {
                 if (command_Args.length != 4) {
                     System.out.println("Usage: EC <hm> <d> <int>");
                     break;
-                } 
-
+                }
                 int value;
                 try {
                     value = Integer.parseInt(command_Args[3]);
                     if (value < 0 || value > 600) {
-                        System.out.println("NOK"); 
-                        break; 
+                        System.out.println("NOK");
+                        break;
                     }
                 } catch (NumberFormatException e) {
-                    System.out.println("NOK"); 
+                    System.out.println("NOK");
                     break;
                 }
 
@@ -309,13 +288,13 @@ public class SpertaClient {
                             outStream.flush();
 
                             // Imprime a confirmação (OK) do Servidor
-                            System.out.println((String) inStream.readObject()); 
+                            System.out.println((String) inStream.readObject());
                         } else {
                             System.out.println("Erro ao obter as chaves.");
                         }
                     } else {
                         // Imprimir respostas de Erro (NOPERM, NOHM, NOKEY)
-                        System.out.println(response); 
+                        System.out.println(response);
                     }
                 } catch (Exception e) {
                     System.err.println("Erro no comando EC: " + e.getMessage());
@@ -594,34 +573,36 @@ public class SpertaClient {
   }
 
   private void checkSResp(ObjectInput in, ObjectOutputStream out, Scanner sc) {
-    try{
-      boolean userOk = false;
-      while(!userOk){
-        String serverMsg = (String) in.readObject();
-        if(serverMsg.equals("WRONG_PWD")){
-          System.out.print("Inserir novamente palavra-passe: ");
-          pwd = sc.nextLine();
-          out.writeObject(pwd);
-          out.flush();
-        } else if (serverMsg.equals("SEND_CERT")) {
-          File certFile = new File("Certs/" + user + ".cer");
-          if (certFile.exists()) {
-              byte[] content = Files.readAllBytes(certFile.toPath());
-              out.writeObject(content); // ✅ writeObject, not writeLong + write
-              out.flush();
-          } else {
-              out.writeObject(new byte[0]); // ✅ empty array, not writeLong(0)
-              out.flush();
-          }
-        } else if (serverMsg.equals("OK_USER") || serverMsg.equals("OK_NEW_USER")) {
-          // Só consideramos o user autenticado nestes dois casos explícitos
-          userOk = true;
+    try {
+        boolean userOk = false;
+        while (!userOk) {
+            String serverMsg = (String) in.readObject();
+            switch (serverMsg) {
+                case "NO_CERT" -> {
+                }
+                case "WRONG_PWD" -> {
+                    System.out.print("Inserir novamente palavra-passe: ");
+                    pwd = sc.nextLine();
+                    out.writeObject(pwd);
+                    out.flush();
+                }
+                case "SEND_CERT" -> {
+                    try {
+                        KeyStore ks = KeyStore.getInstance("JCEKS");
+                        ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
+                        Certificate cert = ks.getCertificate("keyrsa");
+                        out.writeObject(cert != null ? cert.getEncoded() : new byte[0]);
+                        out.flush();
+                    } catch (Exception e) {
+                        System.err.println(e.getMessage());
+                        System.exit(-1);
+                    }
+                }
+                case "OK_USER", "OK_NEW_USER" -> userOk = true;
+            }
         }
-      }
     } catch (IOException | ClassNotFoundException e) {
-      System.err.println(e.getMessage());
+        System.err.println(e.getMessage());
     }
   }
-
-
 }
