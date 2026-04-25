@@ -169,7 +169,7 @@ public class SpertaServer {
                 }
 
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             System.err.println(e.getMessage());
             System.exit(-1);
         }
