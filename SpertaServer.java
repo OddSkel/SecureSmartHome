@@ -9,16 +9,12 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.InvalidKeyException;
 import java.security.KeyStore;
-import java.security.KeyStoreException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.cert.Certificate;
-import java.security.cert.CertificateException;
-import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -26,18 +22,15 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Scanner;
 import java.util.concurrent.Semaphore;
+import java.util.stream.Stream;
 import javax.crypto.Cipher;
-import javax.crypto.IllegalBlockSizeException;
-import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
-import java.nio.ByteBuffer;
-import java.nio.file.Path;
-import java.security.MessageDigest;
 
 public class SpertaServer {
 	private static final int MAX_CLIENTS = 3;
@@ -333,31 +326,45 @@ class ServerThread extends Thread {
 								out.flush();
 							}
 							case "RT" -> {
-								Number result = getHistory(client_Commands[1], user);
-								if(result instanceof Long) {
-									out.writeObject(new String[]{"OK", Long.toString((long) result)});
-									File f = new File("homes/" + client_Commands[1] + "/recent.txt");
-									try(FileInputStream history_To_Send = new FileInputStream(f)){
-										int bytesToRead;
-										byte [] buf = new byte[1024];
-										while((bytesToRead = history_To_Send.read(buf, 0, buf.length))!= -1){
-											out.write(buf, 0, bytesToRead);
-											out.flush();
-										}
+								Entry<Number, String[]> result = getHistory(client_Commands[1], user);
+								if (result.getValue().length != 0) {
+									File keyFile = new File("homes/" + client_Commands[1], "key." + client_Commands[1] + "." + user);
+									File logFile = new File("homes/" + client_Commands[1] + "/devicesLog.txt"); // ✅ slash fixed
+
+									if (logFile.length() == 0) {
+										out.writeObject(new String[]{"NODATA"});
+										out.flush();
+										break;
 									}
-									f.delete();
-								}
-								else if(result instanceof Integer) {
-									switch ((int) result) {
-										case 0 -> out.writeObject(new String[]{"NODATA"});
+									
+									String[] prefix = {"OK", Long.toString((long) result.getKey()),
+										Long.toString(keyFile.length()), keyFile.getName(),
+										Long.toString(logFile.length())};
+									String[] sent = Stream.concat(Arrays.stream(prefix), Arrays.stream(result.getValue()))
+										.toArray(String[]::new);
+									out.writeObject(sent);
+
+									try {
+										byte[] keyBytes = Files.readAllBytes(keyFile.toPath());
+										out.writeObject(keyBytes);
+
+										byte[] logBytes = Files.readAllBytes(logFile.toPath());
+										out.writeObject(logBytes);
+
+										out.flush();
+									} catch (Exception e) {
+										System.err.println(e.getMessage());
+										System.exit(-1);
+									}
+								}else {
+									switch ((int) result.getKey()) {
 										case 1 -> out.writeObject(new String[]{"NOPERM"});
+										case -2 -> out.writeObject(new String[]{"NOPERM"});
 										case -1 -> out.writeObject(new String[]{"NOHM"});
 										default -> throw new AssertionError();
 									}
-									out.flush();
 								}
-							}
-							case "RH" -> {
+							}case "RH" -> {
 								String hm = client_Commands[1];
 								String dev = client_Commands[2];
 								String section = dev.substring(0, 1).toUpperCase();
@@ -463,15 +470,13 @@ class ServerThread extends Thread {
 	
 			out.writeObject("SEND_CERT");
 			out.flush();
-
-			try(FileOutputStream cert = new FileOutputStream(Path.of("Certs", user + ".cer").toString())) {
-				int bytesRead;
-				long size = in.readLong();
-				byte[] buffer = new byte[1024];
-				while(size > 0 && (bytesRead = in.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
-				cert.write(buffer, 0, bytesRead);
-				size -= bytesRead;
-				}
+			File cer = new File("Certs", user + ".cer");
+			try (FileOutputStream cert = new FileOutputStream(cer)){
+				byte[] certBytes = (byte[]) in.readObject(); // ✅ readObject, not readLong + read
+				cert.write(certBytes);
+			} catch (ClassNotFoundException e) {
+				System.err.println(e.getMessage());
+				System.exit(-1);
 			}
 		} catch (IOException e) {
 			System.err.println(e.getMessage());
@@ -657,28 +662,16 @@ class ServerThread extends Thread {
 		return false;
 	}
 
-	private Number getHistory(String house, String user) {
+	private Map.Entry<Number, String[]> getHistory(String house, String user) {
 		File home = new File("homes/" + house);
-		if(!homeExists(house)) return (int) -1; //NOHM
-		try(FileOutputStream recent = new FileOutputStream(home.getAbsolutePath() + "/recent.txt");
-			Scanner sc = new Scanner(new File("homesLog.txt"))) {
-
-			List<String> devices_Lines = Files.readAllLines(Path.of(home.getAbsolutePath() + "/devicesLog.txt"));
-			Map<String, String> latestByDevice = new LinkedHashMap<>();
-			long countLength = 0;
+		if(!homeExists(house)) return Map.entry(-1, new String[0]); //NOHM
+		try(Scanner sc = new Scanner(new File("homesLog.txt"))) {
+			List<String> latestByDevice = new ArrayList<>();
+			File devicesLog = new File(home.getPath() + "/devicesLog.txt");
 
 			if(checkOwner(house, user)) {
-				File devicesLog = new File(home.getPath() + "/devicesLog.txt");
-				if (devicesLog.length() == 0) return (int) 0; //NODATA
-				for (String line : devices_Lines) {
-					String[] parts = line.split(":");
-					latestByDevice.put(parts[0], parts[1]);
-				}
-			}
-
-			else if(verifyUserPermission(house, user)) {
-				File devicesLog = new File(home.getPath() + "/devicesLog.txt");
-				if (devicesLog.length() == 0) return (int) 0; //NODATA
+				return Map.entry(devicesLog.length(), Arrays.copyOfRange(PERMS, 1, PERMS.length));
+			} else if(verifyUserPermission(house, user)) {
 				while (sc.hasNextLine()) {
 					String homesLine = sc.nextLine();
 					if (homesLine.contains(house)) {
@@ -689,32 +682,24 @@ class ServerThread extends Thread {
 							String [] devices = user1.split(":");
 
 							if (user.equals(devices[0])) {
-								for (String line : devices_Lines) {
-									String[] parts = line.split(":");
-
-									if (parts[0].contains(devices[1]) || devices[1].equals("all"))
-										latestByDevice.put(parts[0], parts[1]);
+								String[] device_User = devices[1].split(",");
+								for (String line : device_User) {
+									if (line.equals(devices[1]) || devices[1].equals("all"))
+										latestByDevice.add(line);
 								}
 							}
 						}
 					}
 				}
+				return Map.entry(devicesLog.length(), latestByDevice.toArray(String[]::new)); //OK/NODATA
 			} else {
-				return (int) 1; //NOPERM
+				return Map.entry(-2, new String[0]); //NOPERM
 			}
-			for (Map.Entry<String, String> entry : latestByDevice.entrySet()) {
-				String new_line = entry.getKey() + ":" + entry.getValue() + System.lineSeparator();
-				recent.write(new_line.getBytes());
-				countLength += new_line.getBytes().length;
-			}
-			return countLength; //OK
-
 		} catch (Exception e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
-
-        return (int) 2; //ERROR
+        return Map.entry(2, new String[0]); //ERROR
     }
 
 	private int verify(String[] commands, String user) {

@@ -12,26 +12,16 @@ import java.nio.file.Files;
 import java.security.Key;
 import java.security.KeyException;
 import java.security.KeyStore;
-import java.security.PrivateKey;
-import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
-import java.security.GeneralSecurityException;
 import java.security.cert.Certificate;
-import java.security.cert.CertificateException;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
 import javax.crypto.Cipher;
-import javax.crypto.CipherInputStream;
 import javax.crypto.CipherOutputStream;
 import javax.crypto.NoSuchPaddingException;
-import javax.crypto.SecretKey;
-
-import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 
 public class SpertaClient {
@@ -107,6 +97,27 @@ public class SpertaClient {
           outStream.writeObject(user);
           outStream.writeObject(pwd);
           outStream.flush();
+
+          String serverMsg = (String) inStream.readObject();
+          if (serverMsg.equals("SEND_CERT")) {
+            try {
+              KeyStore ks = KeyStore.getInstance("JCEKS");
+              ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
+              Certificate cert = ks.getCertificate("keyrsa");
+              if (cert == null) {
+                  System.err.println("No certificate found for alias: " + user);
+                  System.exit(-1);
+              }
+
+              // ✅ Send as object to match server's readObject()
+              outStream.writeObject(cert.getEncoded());
+              outStream.flush();
+            } catch (Exception e) {
+              System.err.println(e.getMessage());
+              System.exit(-1);
+            }
+          }
+
           checkSResp(inStream, outStream, user_input);
           
           while(true) {
@@ -187,13 +198,12 @@ public class SpertaClient {
                           
                           // 2. Receber o ficheiro do dispositivo como Objeto
                           byte[] fileBytes = (byte[]) inStream.readObject();
-                          long filesize = fileBytes.length; // para passar à função decipher
                           
                           try(FileOutputStream device = new FileOutputStream(log)) {
                               device.write(fileBytes);
                           }
                           
-                          decipher(f, log, filesize);
+                          decipher(f, log, log.getName());
                           cipher(server_Response[2], f, outStream);
                           log.delete();
                       } else {
@@ -262,7 +272,6 @@ public class SpertaClient {
                                 byte[] decryptedLog = cipherDec.doFinal(encryptedLog);
                                 String logContent = new String(decryptedLog);
                                 
-                                System.out.println("--- CONTEÚDO ATUAL DECIFRADO ---\n" + logContent + "--------------------------------");
                                 // Carregar o estado atual para o Map
                                 String[] lines = logContent.split(System.lineSeparator());
                                 for (String line : lines) {
@@ -321,22 +330,36 @@ public class SpertaClient {
                 outStream.flush();
                 String [] server_Response = (String []) inStream.readObject();
                 switch (server_Response[0]) {
-                  case "OK" ->{
-                    System.out.println("OK, " + server_Response[1] + " (long)." );
-                    try(FileOutputStream history = new FileOutputStream(command_Args[1] + "_history.txt")) {
-                      int bytesRead;
-                      long size = Long.parseLong(server_Response[1]);
-                      byte[] buffer = new byte[1024];
-                      while(size > 0 && (bytesRead = inStream.read(buffer, 0, (int) Math.min(size, (long) buffer.length))) != -1) {
-                        history.write(buffer, 0, bytesRead);
-                        size -= bytesRead;
-                      }
-                    } catch (IOException e) {
-                      System.err.println(e.getMessage());
-                      System.exit(-1);
+                  case "OK" -> {
+                    try {
+                        // ✅ Use readObject() to match server's writeObject()
+                        byte[] keyBytes = (byte[]) inStream.readObject();
+                        byte[] logBytes = (byte[]) inStream.readObject();
+
+
+                        File keyFile = new File(server_Response[3]);
+                        try (FileOutputStream kos = new FileOutputStream(keyFile)) {
+                            kos.write(keyBytes);
+                        }
+
+                        File logFile = new File("temp.enc");
+                        try (FileOutputStream los = new FileOutputStream(logFile)) {
+                            los.write(logBytes);
+                        }
+
+                        // ✅ Pass the actual size, not the drained counter
+                        decipher(keyFile, logFile, "devicesLog_" + command_Args[1] + ".txt");
+
+                        String[] user_devices = Arrays.copyOfRange(server_Response, 5, server_Response.length);
+                        handle_file(logFile, user_devices);
+                        keyFile.delete();
+                        logFile.delete();
+                        System.out.println("OK, " + server_Response[4] + " (long).");
+                    } catch (IOException | ClassNotFoundException e) {
+                        System.err.println(e.getMessage());
+                        System.exit(-1);
                     }
-                  }
-                  case "NODATA" -> System.out.println("NODATA # No data to send.");
+                } case "NODATA" -> System.out.println("NODATA # No data to send.");
                   case "NOHM" -> System.out.println("NOHM # " + command_Args[1] + " doesn't exist.");
                   case "NOPERM" -> System.out.println("NOPERM # no permissions");
                   default -> throw new AssertionError();
@@ -442,6 +465,22 @@ public class SpertaClient {
     }
 	}
   
+  private void handle_file(File file, String[] string) {
+    File finaFile = new File(file.getName());
+    try(FileWriter fW = new FileWriter(finaFile);
+        Scanner sc = new Scanner(file)) {
+      while (sc.hasNextLine()) {
+        String[] line = sc.next().split(":");
+          if (Arrays.asList(string).contains(line[0])) {
+            fW.write(String.join(":", line) + "\n");
+          }
+        }
+    } catch (Exception e) {
+      System.err.println(e.getMessage());
+      System.exit(-1);
+    }
+}
+
   private void cipher(String decrypted_file, File key, ObjectOutputStream outStream) {
     try {
         Key aesKey = getKey(key);
@@ -500,46 +539,34 @@ public class SpertaClient {
     }
   }
 
-  private void decipher(File key, File log, long size) {
-    String fileName = "received_log_file.txt";
+  private void decipher(File key, File log, String name) {
     try {
         Key aesKey = getKey(key);
         if (aesKey == null) throw new KeyException("Key not found!");
 
+        // Read the encrypted bytes directly from the log file
+        byte[] encryptedBytes = Files.readAllBytes(log.toPath());
+
+        // ✅ Use doFinal() to match how EC encrypted it (not CipherInputStream)
         Cipher c = Cipher.getInstance("AES");
         c.init(Cipher.DECRYPT_MODE, aesKey);
+        byte[] decryptedBytes = c.doFinal(encryptedBytes);
 
-        try ( FileOutputStream fileReceived = new FileOutputStream(fileName);
-              FileInputStream fin = new FileInputStream(log);
-              CipherInputStream cipherIn = new CipherInputStream(fin, c)) {
-                
-          int bytesRead;
-          byte[] buffer = new byte[1024];
-          while (size > 0 && (bytesRead = cipherIn.read(buffer, 0, (int) Math.min(size, buffer.length))) != -1) {
-              fileReceived.write(buffer, 0, bytesRead);
-              size -= bytesRead;
-          }
-      } catch (IOException e) {
-          System.err.println(e.getMessage());
-          System.exit(-1);
-      }
-    } catch (KeyException | NoSuchAlgorithmException | NoSuchPaddingException e) {
-      System.err.println(e.getMessage());
-      System.exit(-1);
+        // ✅ Write decrypted content back to the same log file so handle_file can read it
+        try (FileOutputStream fos = new FileOutputStream(name)) {
+            fos.write(decryptedBytes);
+        }
+
+    } catch (Exception e) {
+        System.err.println(e.getMessage());
+        System.exit(-1);
     }
-    File f = new File(fileName);
-    f.delete();
-  }
+}
 
   private Key getKey(File f) {
     Key aesKey = null;
     try {
-      byte[] chaveAEScifrada;
-      try (FileInputStream kos = new FileInputStream(f)) {
-          chaveAEScifrada = new byte[kos.available()];
-          kos.read(chaveAEScifrada);
-      }
-
+      byte[] chaveAEScifrada = Files.readAllBytes(f.toPath());
       KeyStore kstore = KeyStore.getInstance("JCEKS");
       kstore.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
       Key myprivateKey = kstore.getKey("keyrsa", pass_keystore.toCharArray());
@@ -577,16 +604,13 @@ public class SpertaClient {
           out.writeObject(pwd);
           out.flush();
         } else if (serverMsg.equals("SEND_CERT")) {
-          // O servidor pediu o certificado, vamos enviá-lo
           File certFile = new File("Certs/" + user + ".cer");
           if (certFile.exists()) {
-              out.writeLong(certFile.length()); // Envia o tamanho
               byte[] content = Files.readAllBytes(certFile.toPath());
-              out.write(content); // Envia o conteúdo
+              out.writeObject(content); // ✅ writeObject, not writeLong + write
               out.flush();
           } else {
-              System.err.println("Erro: Certificado não encontrado em " + certFile.getPath());
-              out.writeLong(0);
+              out.writeObject(new byte[0]); // ✅ empty array, not writeLong(0)
               out.flush();
           }
         } else if (serverMsg.equals("OK_USER") || serverMsg.equals("OK_NEW_USER")) {
