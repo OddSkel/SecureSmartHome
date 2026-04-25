@@ -9,6 +9,8 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.Key;
+import java.security.KeyException;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -26,8 +28,8 @@ import java.util.Map.Entry;
 import java.util.Scanner;
 import java.util.concurrent.Semaphore;
 import java.util.stream.Stream;
-
 import javax.crypto.Cipher;
+import javax.crypto.CipherOutputStream;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
@@ -43,6 +45,11 @@ public class SpertaServer {
 	private static final Semaphore signal = new Semaphore(MAX_CLIENTS);
 	private static final Semaphore command_signal = new Semaphore(1);
 	private String serverPwdCifra;
+	private static final String SALT_FILE = "server.salt";
+	private static final int AES_KEY_SIZE = 128;
+	private static final int ITERATIONS = 310_000;
+	private Key serverKey;
+
 	public static void main(String[] args) {
 		System.out.println("[SERVER] Starting server...");
 		SpertaServer server = new SpertaServer();
@@ -60,6 +67,13 @@ public class SpertaServer {
 	}
 
 	public void startServer (int port, String pwdCifra, String keystorePath, String keystorePwd){
+		try {
+			serverKey = generateOrLoadKey(pwdCifra);
+			System.out.println("[SERVER] Encryption key loaded successfully.");
+		} catch (Exception e) {
+			System.err.println("[SERVER] Failed to generate encryption key: " + e.getMessage());
+			System.exit(-1);
+		}
 		SSLServerSocket sSoc = null;
     try{
       KeyStore ks = KeyStore.getInstance("JCEKS");
@@ -119,7 +133,7 @@ public class SpertaServer {
 					check.flush();
 
 					signal.acquire();
-					ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check, rec, pwdCifra);
+					ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check, rec, pwdCifra, keystorePwd, serverKey);
           newServerThread.start();
 				} catch (IOException e) {
 					System.err.println(e.getMessage());
@@ -136,28 +150,65 @@ public class SpertaServer {
 			System.exit(-1);
 		}
 	}
+		private static Key generateOrLoadKey(String password) throws Exception {
+			byte[] salt = loadOrCreateSalt();
+
+			PBEKeySpec spec = new PBEKeySpec(
+				password.toCharArray(),
+				salt,
+				ITERATIONS
+			);
+
+			SecretKeyFactory factory = SecretKeyFactory.getInstance("PBEWithHmacSHA256AndAES_128");
+			SecretKey pbeKey = factory.generateSecret(spec);
+			spec.clearPassword();
+
+			// Force exactly 16 bytes (128 bits) for AES-128
+			byte[] keyBytes = Arrays.copyOf(pbeKey.getEncoded(), 16);
+
+			return new SecretKeySpec(keyBytes, "AES");
+		}
+
+		private static byte[] loadOrCreateSalt() throws Exception {
+			File saltFile = new File(SALT_FILE);
+
+			if (saltFile.exists()) {
+				// Load existing salt so the key stays the same
+				return Files.readAllBytes(saltFile.toPath());
+			} else {
+				// First run: generate and save a new salt
+				byte[] salt = new byte[16];
+				new SecureRandom().nextBytes(salt);
+				Files.write(saltFile.toPath(), salt);
+				return salt;
+			}
+		}
 }
 
 class ServerThread extends Thread {
 	private Socket socket = null;
 	private Semaphore signal = null;
 	private Semaphore command = null;
-	private String serverPwdCifra;
+
+	Key serverKey;
 
 	private File users, homes, homesFolder;
-	private String user, pwd, trustore, pass_truststore, keystore, pass_keystore;
+	private String user, pwd, trustore, pass_truststore, keystore, pass_keystore, keyStorePwd, serverPwdCifra;
 	private final ObjectInputStream in;
 	private final ObjectOutputStream out;
 
 	private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
 
-	ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal, ObjectOutputStream out, ObjectInputStream in, String pwdCifra) {
+	ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal, ObjectOutputStream out, ObjectInputStream in, 
+		String pwdCifra, String keyStorePwd, Key serverKey) {
 		socket = inSoc;
 		this.signal = signal;
 		command = command_signal;
 		this.out = out;
 		this.in = in;
 		serverPwdCifra = pwdCifra;
+		this.keyStorePwd = keyStorePwd;
+		this.serverKey = serverKey;
 		System.out.println("thread do server para cada cliente");
 	}
 
@@ -190,7 +241,7 @@ class ServerThread extends Thread {
 				pwd = (String) in.readObject();
 				String [] client_args = {trustore, pass_truststore, keystore, pass_keystore, user, pwd};
 				System.out.println("["+ user +" Thread] Authentication request received for user: " + user);
-				authenticate(client_args);
+				authenticate(client_args, serverKey);
 				while(true){
 					String [] client_Commands = (String[]) in.readObject();
 					command.acquire();
@@ -316,9 +367,16 @@ class ServerThread extends Thread {
 								String dev = client_Commands[2];
 								String section = dev.substring(0, 1).toUpperCase();
 
-								if (!homeExists(hm)) {
+								File decFile = new File("ho_dec.txt");
+								if (homes.length() != 0) {
+									decipher(serverKey, homes, "ho_dec.txt");
+								} else {
+									decFile.createNewFile();
+								}
+
+								if (!homeExists(hm, decFile)) {
 									out.writeObject("NOHM");
-								} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
+								} else if (!checkOwner(hm, user, decFile) && !verifyUserPermission(hm, user, section, decFile)) {
 									out.writeObject("NOPERM");
 								} else {
 									File sectionKeyFile = new File("homes/" + hm + "/" + section, "key." + hm + "." + section + "." + user);
@@ -327,6 +385,13 @@ class ServerThread extends Thread {
 									if (!sectionKeyFile.exists() || !homeKeyFile.exists()) {
 										out.writeObject("NOKEY");
 									} else {
+										File devFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
+										if (!devFile.exists()) {
+											out.writeObject("NOD");
+											decFile.delete();
+											out.flush();
+											break;
+										}
 										out.writeObject("OK_EC"); // Avisa o cliente que vai enviar ficheiros
 										
 										// 1. Envia a Chave da Secção
@@ -349,7 +414,6 @@ class ServerThread extends Thread {
 
 										// 4. Recebe do cliente o valor cifrado para a secção individual (ex: M1.txt)
 										byte[] encryptedDataFromClient = (byte[]) in.readObject();
-										File devFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
 										try (FileOutputStream fos = new FileOutputStream(devFile, true)) {
 											fos.write(encryptedDataFromClient);
 										}
@@ -357,12 +421,13 @@ class ServerThread extends Thread {
 										// 5. Recebe do cliente o devicesLog cifrado já atualizado
 										byte[] updatedEncryptedLog = (byte[]) in.readObject();
 										try (FileOutputStream fos = new FileOutputStream(globalLog, false)) { // false para sobrescrever
-											fos.write(updatedEncryptedLog); 
+											fos.write(updatedEncryptedLog);
 										}
-
+										
 										out.writeObject("OK");
 									}
 								}
+								decFile.delete();
 								out.flush();
 							}
 							case "RT" -> {
@@ -404,14 +469,22 @@ class ServerThread extends Thread {
 										default -> throw new AssertionError();
 									}
 								}
-							}case "RH" -> {
+							}
+							case "RH" -> {
 								String hm = client_Commands[1];
 								String dev = client_Commands[2];
 								String section = dev.substring(0, 1).toUpperCase();
 
-								if (!homeExists(hm)) {
+								File decFile = new File("ho_dec.txt");
+								if (homes.length() != 0) {
+									decipher(serverKey, homes, "ho_dec.txt");
+								} else {
+									decFile.createNewFile();
+								}
+
+								if (!homeExists(hm, decFile)) {
 									out.writeObject("NOHM");
-								} else if (!checkOwner(hm, user) && !verifyUserPermission(hm, user, section)) {
+								} else if (!checkOwner(hm, user, decFile) && !verifyUserPermission(hm, user, section, decFile)) {
 									out.writeObject("NOPERM");
 								} else {
 									File logFile = new File("homes/" + hm + "/" + section + "/" + dev + ".txt");
@@ -437,6 +510,7 @@ class ServerThread extends Thread {
 										System.out.println("[" + user + " Thread] RH: Enviada chave e " + fileContent.length + " bytes para " + dev);
 									}
 								}
+								decFile.delete();
 								out.flush();
 							}
 
@@ -462,34 +536,46 @@ class ServerThread extends Thread {
 		}
 	}
 
-	private void authenticate(String [] args) {
-		try(Scanner sc = new Scanner(users)) {
-			while (sc.hasNextLine()) {
-				String[] credentials = sc.nextLine().split(":");
-				if (credentials[0].equals(args[args.length - 2])) {
-					while(true){
-						out.writeObject("NO_CERT");
-						out.flush();
-						byte[] salt = Base64.getDecoder().decode(credentials[2]);
-						String passHash = hashPassword(pwd, salt);
-						if (credentials[1].equals(passHash)) {
-							out.writeObject("OK_USER");
-							out.flush();
-							System.out.println("["+ user +" Thread] Authentication successful for user: " + user);
-							return;
-						} else {
-							out.writeObject("WRONG_PWD");
-							out.flush();
-							System.out.println("["+ user +" Thread] Authentication failed for user: " + user + ". Incorrect password.");
-							pwd = (String) in.readObject();
+	private void authenticate(String [] args, Key key) {
+		try {
+			if (users.length() != 0) {
+				decipher(key, users, "users_dec.txt");
+			}
+			File decFile = new File("users_dec.txt");
+			if (decFile.exists()) {
+				try (Scanner sc = new Scanner(decFile)) {
+					while (sc.hasNextLine()) {
+						String[] credentials = sc.nextLine().split(":");
+						if (credentials[0].equals(args[args.length - 2])) {
+							while (true) {
+								out.writeObject("NO_CERT");
+								out.flush();
+								byte[] salt = Base64.getDecoder().decode(credentials[2]);
+								String passHash = hashPassword(pwd, salt);
+								if (credentials[1].equals(passHash)) {
+									out.writeObject("OK_USER");
+									out.flush();
+									System.out.println("[" + user + " Thread] Authentication successful for user: " + user);
+									decFile.delete();
+									return;
+								} else {
+									out.writeObject("WRONG_PWD");
+									out.flush();
+									System.out.println("[" + user + " Thread] Authentication failed for user: " + user);
+									pwd = (String) in.readObject();
+								}
+							}
 						}
 					}
+				} catch (IOException | ClassNotFoundException e) {
+					System.err.println(e.getMessage());
+					System.exit(-1);
 				}
+				decFile.delete();
 			}
 			createUser(user, pwd);
-			out.writeObject("OK_NEW_USER");
-			out.flush();
-		}catch (IOException | ClassNotFoundException e) {
+			decFile.delete();
+		} catch (Exception e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
@@ -497,32 +583,88 @@ class ServerThread extends Thread {
 
     private void createUser(String user, String pwd) {
 		try {
+			if (users.length() != 0) {
+				decipher(serverKey, users, "users_dec.txt");
+			}
 			byte[] salt = generateSalt();
 			String hash = hashPassword(pwd, salt);
 			String newUser = user + ":" + hash + ":" + Base64.getEncoder().encodeToString(salt);
-			try(FileWriter fw = new FileWriter(users, true)) {
+			try(FileWriter fw = new FileWriter("users_dec.txt", true)) {
 				fw.write(newUser + System.lineSeparator());
 				System.out.println("[" + user + " Thread] New user created: " + user);
 			} catch (IOException e) {
 				System.err.println(e.getMessage());
 				System.exit(-1);
 			}
+			Files.copy(Path.of("users_dec.txt"), users.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+			cipher(users, serverKey);
 	
 			out.writeObject("SEND_CERT");
 			out.flush();
 			File cer = new File("Certs", user + ".cer");
 			try (FileOutputStream cert = new FileOutputStream(cer)){
-				byte[] certBytes = (byte[]) in.readObject(); // ✅ readObject, not readLong + read
+				byte[] certBytes = (byte[]) in.readObject();
 				cert.write(certBytes);
 			} catch (ClassNotFoundException e) {
 				System.err.println(e.getMessage());
 				System.exit(-1);
 			}
+			out.writeObject("OK_NEW_USER");
+			out.flush();
 		} catch (IOException e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
     }
+
+	private void cipher(File fileToEncrypt, Key key) {
+		try {
+			if (key == null) throw new KeyException("Key not found!");
+			
+			Cipher c = Cipher.getInstance("AES");
+			c.init(Cipher.ENCRYPT_MODE, key);
+
+			// Encrypt to temp file first
+			File tempFile = new File(fileToEncrypt.getName() + ".enc");
+			try (FileInputStream logFile = new FileInputStream(fileToEncrypt);
+				FileOutputStream tempOut = new FileOutputStream(tempFile);
+				CipherOutputStream cout = new CipherOutputStream(tempOut, c)) {
+				int bytesToRead;
+				byte[] buf = new byte[1024];
+				while ((bytesToRead = logFile.read(buf, 0, buf.length)) != -1) {
+					cout.write(buf, 0, bytesToRead);
+				}
+			}
+
+			Files.move(tempFile.toPath(), fileToEncrypt.toPath(),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+		} catch (Exception e) {
+			System.err.println(e.getMessage());
+			System.exit(-1);
+		}
+	}
+
+	private void decipher(Key key, File log, String name) {
+		try {
+			
+			if (key == null) throw new KeyException("Key not found!");
+
+			byte[] encryptedBytes = Files.readAllBytes(log.toPath());
+
+			Cipher c = Cipher.getInstance("AES");
+			c.init(Cipher.DECRYPT_MODE, key);
+			byte[] decryptedBytes = c.doFinal(encryptedBytes);
+
+			try (FileOutputStream fos = new FileOutputStream(name)) {
+				fos.write(decryptedBytes);
+			}
+
+		} catch (Exception e) {
+			System.err.println(e.getMessage());
+			System.exit(-1);
+		}
+	}
 
 	private String hashPassword(String pwd2, byte[] salt) {
 		MessageDigest md;
@@ -547,33 +689,43 @@ class ServerThread extends Thread {
 
 	private void createHome(String homeName) {
 		try {
-			if(homeExists(homeName)){
+			File decFile = new File("ho_dec.txt");
+			if (homes.length() != 0) {
+				decipher(serverKey, homes, "ho_dec.txt");
+			} else decFile.createNewFile();
+
+			if(homeExists(homeName, new File("ho_dec.txt"))){
+
 				out.writeObject("HOME_EXISTS");
 				out.flush();
 				System.out.println("[" + user + " Thread] Home creation failed. Home already exists: " + homeName);
 			} else {
-				try(FileWriter fw = new FileWriter(homes, true)) {
-					fw.write(homeName + ":"+ user + ">>E:0;G:0;L:0;M:0;P:0;S:0" + System.lineSeparator());
-
-					File newHomeFolder = new File(homesFolder, homeName);
-					newHomeFolder.mkdirs();
-					File devicesFile = new File(newHomeFolder, "devicesLog.txt");
-					devicesFile.createNewFile();
-
-					for(String section : PERMS) {
-						if(section.equals("all")) continue;
-						File sectionFolder = new File(newHomeFolder, section);
-						sectionFolder.mkdirs();
-					}
-
-					System.out.println("[" + user + " Thread] Home created: " + homeName);
-					out.writeObject("HOME_CREATED");
-					out.flush();
-				} catch (IOException e) {
-					System.err.println(e.getMessage());
-					System.exit(-1);
+				try (FileWriter fw = new FileWriter(decFile, true)) {
+					fw.write(homeName + ":" + user + ">>E:0;G:0;L:0;M:0;P:0;S:0" + System.lineSeparator());
 				}
+
+				File newHomeFolder = new File(homesFolder, homeName);
+				newHomeFolder.mkdirs();
+				File devicesFile = new File(newHomeFolder, "devicesLog.txt");
+				devicesFile.createNewFile();
+
+				for (String section : PERMS) {
+					if (section.equals("all")) continue;
+					File sectionFolder = new File(newHomeFolder, section);
+					sectionFolder.mkdirs();
+				}
+
+				// Now safe to copy and encrypt
+				Files.copy(decFile.toPath(), homes.toPath(),
+					java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+				cipher(homes, serverKey);
+				decFile.delete();
+
+				System.out.println("[" + user + " Thread] Home created: " + homeName);
+				out.writeObject("HOME_CREATED");
+				out.flush();
 			}
+			decFile.delete();
 		} catch (IOException e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
@@ -593,8 +745,12 @@ class ServerThread extends Thread {
 		return false;
     }
 
-    private boolean homeExists(String homeName) {
-		try(Scanner sc = new Scanner(homes)) {
+	private boolean homeExists(String homeName) {
+    	return homeExists(homeName, homes); // default: use homes (encrypted)
+	}
+
+    private boolean homeExists(String homeName, File file) {
+		try(Scanner sc = new Scanner(file)) {
 			while (sc.hasNextLine()) {
 			String[] homeData = sc.nextLine().split(":");
 			if (homeData[0].equals(homeName)) return true;
@@ -606,8 +762,12 @@ class ServerThread extends Thread {
 		return false;
     }
 
-    private boolean checkOwner(String homeName, String user) {
-		try(Scanner sc = new Scanner(homes)) {
+	private boolean checkOwner(String homeName, String user) {
+		return checkOwner(homeName, user, homes);
+	}
+
+    private boolean checkOwner(String homeName, String user, File file) {
+		try(Scanner sc = new Scanner(file)) {
 			while (sc.hasNextLine()) {
 				String line = sc.nextLine();
 				String[] homeData = line.split(":");
@@ -703,70 +863,111 @@ class ServerThread extends Thread {
 	}
 
 	private Map.Entry<Number, String[]> getHistory(String house, String user) {
-		File home = new File("homes/" + house);
-		if(!homeExists(house)) return Map.entry(-1, new String[0]); //NOHM
-		try(Scanner sc = new Scanner(new File("homesLog.txt"))) {
-			List<String> latestByDevice = new ArrayList<>();
-			File devicesLog = new File(home.getPath() + "/devicesLog.txt");
+		File decFile = new File("ho_dec.txt");
+		try {
+			if (homes.length() != 0) {
+            decipher(serverKey, homes, "ho_dec.txt");
+			} else {
+				decFile.createNewFile();
+			}
+			File home = new File("homes/" + house);
 
-			if(checkOwner(house, user)) {
-				return Map.entry(devicesLog.length(), Arrays.copyOfRange(PERMS, 1, PERMS.length));
-			} else if(verifyUserPermission(house, user)) {
-				while (sc.hasNextLine()) {
-					String homesLine = sc.nextLine();
-					if (homesLine.contains(house)) {
-						String [] owners = homesLine.split(">");
-						String [] users_from_File = owners[1].split("/");
+			if (!homeExists(house, decFile)) {
+				decFile.delete();
+				return Map.entry(-1, new String[0]); // NOHM
+			}
+			try(Scanner sc = new Scanner(new File("homesLog.txt"))) {
+				List<String> latestByDevice = new ArrayList<>();
+				File devicesLog = new File(home.getPath() + "/devicesLog.txt");
 
-						for (String user1 : users_from_File) {
-							String [] devices = user1.split(":");
+				if(checkOwner(house, user, decFile)) {
+					decFile.delete();
+					return Map.entry(devicesLog.length(), Arrays.copyOfRange(PERMS, 1, PERMS.length));
+				} else if(verifyUserPermission(house, user, decFile)) {
+					while (sc.hasNextLine()) {
+						String homesLine = sc.nextLine();
+						if (homesLine.contains(house)) {
+							String [] owners = homesLine.split(">");
+							String [] users_from_File = owners[1].split("/");
 
-							if (user.equals(devices[0])) {
-								String[] device_User = devices[1].split(",");
-								for (String line : device_User) {
-									if (line.equals(devices[1]) || devices[1].equals("all"))
-										latestByDevice.add(line);
+							for (String user1 : users_from_File) {
+								String [] devices = user1.split(":");
+
+								if (user.equals(devices[0])) {
+									String[] device_User = devices[1].split(",");
+									for (String line : device_User) {
+										if (line.equals(devices[1]) || devices[1].equals("all"))
+											latestByDevice.add(line);
+									}
 								}
 							}
 						}
 					}
+					decFile.delete();
+					return Map.entry(devicesLog.length(), latestByDevice.toArray(String[]::new)); //OK/NODATA
+				} else {
+					decFile.delete();
+					return Map.entry(-2, new String[0]); //NOPERM
 				}
-				return Map.entry(devicesLog.length(), latestByDevice.toArray(String[]::new)); //OK/NODATA
-			} else {
-				return Map.entry(-2, new String[0]); //NOPERM
+			} catch (Exception e) {
+				System.err.println(e.getMessage());
+				System.exit(-1);
 			}
 		} catch (Exception e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
+		decFile.delete();
         return Map.entry(2, new String[0]); //ERROR
     }
 
 	private int verify(String[] commands, String user) {
-		if(!homeExists(commands[1])) return -1; //NOHM
-		try(Scanner sc = new Scanner(new File("homesLog.txt"))) {
-			Path path = Path.of("homesLog.txt");
+		File decFile = new File("ho_dec.txt");
+		try {
+			if (homes.length() != 0) {
+				decipher(serverKey, homes, "ho_dec.txt");
+			} else {
+				return -1; // no homes at all
+			}
+
+			if (!homeExists(commands[1], decFile)) {
+				decFile.delete();
+				return -1; // NOHM
+			}
+
+			Path path = decFile.toPath();
 			List<String> lines = Files.readAllLines(path);
 			List<String> updated = new ArrayList<>();
-			while (sc.hasNextLine()) {
-				if (checkOwner(commands[1], user)) {
-					for (String line : lines) {
-						int last = line.lastIndexOf('>');
-						String devicesPart = line.substring(last + 1);
-						String owners = line.substring(0, last);
-						String [] house_Owner = line.split(">");
-						if (house_Owner[0].contains(user) && house_Owner[0].contains(commands[1])) {
-							String [] devices = devicesPart.split(";");
-							int i = 0;
-							while (!devices[i].contains(commands[2])) i++;
-							line = updatedDevice(devices, devices[i]);
-							updated.add(owners + ">" + line);
-						} else updated.add(line);
+
+			if (checkOwner(commands[1], user, decFile)) {
+				for (String line : lines) {
+					int last = line.lastIndexOf('>');
+					String devicesPart = line.substring(last + 1);
+					String owners = line.substring(0, last);
+					String[] house_Owner = line.split(">");
+					if (house_Owner[0].contains(user) && house_Owner[0].contains(commands[1])) {
+						String[] devices = devicesPart.split(";");
+						int i = 0;
+						while (!devices[i].contains(commands[2])) i++;
+						line = updatedDevice(devices, devices[i]);
+						updated.add(owners + ">" + line);
+					} else {
+						updated.add(line);
 					}
-					Files.write(path, updated);
-					return 1; //OK
-				} else return 0; //NOPERM
+				}
+
+				// Write updated content to ho_dec.txt, copy back and encrypt
+				Files.write(path, updated);
+				Files.copy(decFile.toPath(), homes.toPath(),
+					java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+				cipher(homes, serverKey);
+				decFile.delete();
+				return 1; // OK
+			} else {
+				decFile.delete();
+				return 0; // NOPERM
 			}
+
 		} catch (Exception e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
@@ -792,12 +993,12 @@ class ServerThread extends Thread {
 		return sB.toString();
     }
 
-	private boolean verifyUserPermission(String homeName, String user) {
-		return verifyUserPermission(homeName, user, "all");
+	private boolean verifyUserPermission(String homeName, String user, File homes) {
+		return verifyUserPermission(homeName, user, "all", homes);
 	}
 
-    private boolean verifyUserPermission(String homeName, String user, String section) {
-		try (Scanner sc = new Scanner(homes)) {
+    private boolean verifyUserPermission(String homeName, String user, String section, File file) {
+		try (Scanner sc = new Scanner(file)) {
 			while (sc.hasNextLine()) {
 				String line = sc.nextLine();
 				if (line.startsWith(homeName + ":")) {
@@ -823,14 +1024,10 @@ class ServerThread extends Thread {
 				}
 			}
 		} catch (IOException e) { 
-            return false; 
+            return false;
         }
 		return false;
 	}
-
-
-
-
 
 	private void updateGlobalDeviceLog(String homeName, String deviceName, String lastValue) {
 		File globalLog = new File("homes/" + homeName + "/devicesLog.txt");
@@ -853,23 +1050,4 @@ class ServerThread extends Thread {
 			System.err.println("Erro ao atualizar log global.");
 		}
 	}
-
 }
-
-/*
-try(FileWriter fW = new FileWriter(Paths.get("homes/" + target[1], target[2], target[2] + value + ".txt").toString())) {
-					fW.write(System.currentTimeMillis() + "," + key + ":" + value + System.lineSeparator());
-				} catch (Exception e) {
-					System.err.println(e.getMessage());
-					System.exit(-1);
-				}
-*/
-
-/*
-try(FileWriter fW = new FileWriter(Paths.get("homes/" + target[1], target[2], target[2] + value + ".txt").toString())) {
-					fW.write(System.currentTimeMillis() + "," + key + ":" + value + System.lineSeparator());
-				} catch (Exception e) {
-					System.err.println(e.getMessage());
-					System.exit(-1);
-				}
-*/
