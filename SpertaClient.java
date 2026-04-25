@@ -8,9 +8,11 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.security.Key;
 import java.security.KeyException;
 import java.security.KeyStore;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.cert.Certificate;
@@ -91,10 +93,23 @@ public class SpertaClient {
         ObjectInputStream inStream = new ObjectInputStream(cliSoc.getInputStream());
         Scanner user_input = new Scanner(System.in)) {
         
-        byte [] nounce_rec = (byte[]) inStream.readObject();
-        byte [] res = nounce_rec;
-        outStream.writeObject(res);
-        outStream.flush();
+        try{
+          byte[] nounce_rec = (byte[]) inStream.readObject();
+          byte[] jarBytes = Files.readAllBytes(Paths.get("SpertaClient.jar"));
+          byte[] combined = new byte[nounce_rec.length + jarBytes.length];
+          System.arraycopy(nounce_rec, 0, combined, 0, nounce_rec.length);
+          System.arraycopy(jarBytes, 0, combined, nounce_rec.length, jarBytes.length);
+
+          MessageDigest md = MessageDigest.getInstance("SHA-256");
+          byte[] hashBytes = md.digest(combined);
+
+          outStream.writeObject(hashBytes);
+          outStream.flush();
+        } catch (Exception e) {
+          System.err.println("SHA-256 algorithm not found: " + e.getMessage());
+          System.exit(-1);
+        }
+
         String integrity_check = (String) inStream.readObject();
         if (integrity_check.equals("OK-ATTEST")) {
           outStream.writeObject(truststore);

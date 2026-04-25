@@ -8,6 +8,7 @@ import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -91,9 +92,24 @@ public class SpertaServer {
 					secure_random.nextBytes(nounce);
 					check.writeObject(nounce);
 					check.flush();
+          byte[] hashBytes = null;
 
-					byte [] receive = (byte[]) rec.readObject();
-					if (!Arrays.equals(nounce, receive)) {
+          try{
+            byte[] jarBytes = Files.readAllBytes(Paths.get("SpertaClient.jar"));
+            byte[] combined = new byte[nounce.length + jarBytes.length];
+            System.arraycopy(nounce, 0, combined, 0, nounce.length);
+            System.arraycopy(jarBytes, 0, combined, nounce.length, jarBytes.length);
+
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            hashBytes = md.digest(combined);
+
+          } catch (Exception e) {
+            System.err.println("[SERVER] SHA-256 algorithm not found: " + e.getMessage());
+            System.exit(-1);
+          }
+
+					byte[] receive = (byte[]) rec.readObject();
+					if (!Arrays.equals(hashBytes, receive)) {
 						check.writeObject("NOK-ATTEST");
 						check.flush();
 						inSoc.close();
