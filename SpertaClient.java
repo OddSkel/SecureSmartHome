@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.security.Key;
@@ -19,10 +18,14 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Scanner;
+
 import javax.crypto.Cipher;
 import javax.crypto.CipherOutputStream;
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
+import javax.net.SocketFactory;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 
 public class SpertaClient {
   private int port;
@@ -79,7 +82,11 @@ public class SpertaClient {
   }
 
   public void startClient(){
-    try(Socket cliSoc = new Socket(host, port);
+    System.setProperty("javax.net.ssl.trustStore", "Certs/truststore.client");
+    System.setProperty("javax.net.ssl.trustStorePassword", "Truststore");
+    SocketFactory sf = SSLSocketFactory.getDefault();
+    try(SSLSocket cliSoc = (SSLSocket)sf.createSocket(host, port);
+        //Socket cliSoc = new Socket(host, port);
         ObjectOutputStream outStream = new ObjectOutputStream(cliSoc.getOutputStream());
         ObjectInputStream inStream = new ObjectInputStream(cliSoc.getInputStream());
         Scanner user_input = new Scanner(System.in)) {

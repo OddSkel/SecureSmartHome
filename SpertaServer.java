@@ -5,7 +5,6 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,13 +25,19 @@ import java.util.Map.Entry;
 import java.util.Scanner;
 import java.util.concurrent.Semaphore;
 import java.util.stream.Stream;
+
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLServerSocketFactory;
 
 public class SpertaServer {
+  private SSLServerSocket serverSocket;
 	private static final int MAX_CLIENTS = 3;
 	private static final Semaphore signal = new Semaphore(MAX_CLIENTS);
 	private static final Semaphore command_signal = new Semaphore(1);
@@ -54,7 +59,26 @@ public class SpertaServer {
 	}
 
 	public void startServer (int port, String pwdCifra, String keystorePath, String keystorePwd){
-		try(ServerSocket sSoc = new ServerSocket(port)) {
+		SSLServerSocket sSoc = null;
+    try{
+      KeyStore ks = KeyStore.getInstance("JCEKS");
+      FileInputStream fis = new FileInputStream("Keys/keystore.server");
+      ks.load(fis, "Server".toCharArray());
+      
+      KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+      kmf.init(ks, "Server".toCharArray());
+
+      SSLContext sc = SSLContext.getInstance("TLS");
+      sc.init(kmf.getKeyManagers(), null, null);
+      SSLServerSocketFactory ssf = sc.getServerSocketFactory();
+      sSoc = (SSLServerSocket) ssf.createServerSocket(port);
+      this.serverSocket = sSoc;
+    } catch(Exception e){
+      System.err.println("Error setting up SSL: " + e.getMessage());
+      System.exit(-1);
+    }
+    try {
+      //(ServerSocket sSoc = new ServerSocket(port)) {
 			System.out.println("[SERVER] Server started on port " + port);
 			while(true) {
 				try {
@@ -80,7 +104,7 @@ public class SpertaServer {
 
 					signal.acquire();
 					ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check, rec, pwdCifra);
-                	newServerThread.start();
+          newServerThread.start();
 				} catch (IOException e) {
 					System.err.println(e.getMessage());
 					System.exit(-1);
@@ -91,7 +115,7 @@ public class SpertaServer {
 				}
 			
 			}
-		} catch (IOException e) {
+		} catch (Exception e) {
 			System.err.println(e.getMessage());
 			System.exit(-1);
 		}
