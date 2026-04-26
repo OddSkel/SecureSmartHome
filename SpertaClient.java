@@ -225,7 +225,7 @@ public class SpertaClient {
                             //    Server responds with "SEND_SECTION_KEY" + the encrypted key
                             String keyResponse = (String) inStream.readObject();
                             if (!keyResponse.equals("SECTION_KEY")) {
-                                System.out.println("NOK");
+                                System.out.println("NOKEY");
                                 break;
                             }
 

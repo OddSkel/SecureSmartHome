@@ -347,6 +347,8 @@ class ServerThread extends Thread {
                                             keySecOut.write(cRSA.wrap(secKey));
                                         }
                                     }
+                                  usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
+                                  homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
                                 } catch (Exception e) {
                                     System.err.println("Erro ao gerar chaves no CREATE: " + e.getMessage());
                                     System.exit(-1);
@@ -377,6 +379,7 @@ class ServerThread extends Thread {
                                 // Send the section key encrypted with the OWNER's public key
                                 byte[] encryptedKeyForOwner = getSectionKeyEncryptedFor(homeName, section, user);
                                 out.writeObject("SECTION_KEY");
+                                out.flush();
                                 out.writeObject(encryptedKeyForOwner);
                                 out.flush();
 
