@@ -593,7 +593,7 @@ public class SpertaClient {
                                                     index += 16;
                                                 }
                                             }
-                                            System.out.println("Histórico guardado com sucesso: " + fileName);
+                                            System.out.println("Historico guardado com sucesso: " + fileName);
                                         }
                                     } catch (java.security.GeneralSecurityException e) {
                                         System.err.println("Erro de segurança: Falha na decifragem. Verifique se os dados estão corrompidos.");
@@ -607,7 +607,7 @@ public class SpertaClient {
                                         case "NOD" ->
                                             System.out.println("NOD # dispositivo não existe");
                                         case "NOPERM" ->
-                                            System.out.println("NOPERM # sem permissões");
+                                            System.out.println("NOPERM # sem permissoes");
                                         case "NODATA" ->
                                             System.out.println("NODATA # sem dados");
                                         case "NOKEY" ->
