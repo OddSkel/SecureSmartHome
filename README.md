@@ -56,19 +56,7 @@ If the operation was a success, then the server sends a `OK` response to the cli
 
 ## Limitations
 
-The communication, in phase 1, isn't secured. Since the client and server communicate with each other without proper secure connection, then it is prone to Man-in-the-Middle attacks.
-
-The server trusts the input of client, and vice-versa, which makes it vulnerable to spoofing attacks, where a mallicious user personifies the server and communicates with the client, giving him wrong messages or wrong files to see.
-
-The files, in phase 1, are not encrypted, which leads to a mallicious user to collect the information without needing it to decrypt it.
-
-The number of devices of this program is limited, which means that a new device needs to be manually added to the PERMS constant, in order to being able to accept registering it and sending state/time value.
-
-In phase 1, the server doesn't know if it's talking with the right client and the client doesn't know if it's being authenticated by a server (could be a malicious impersonating a server talking to a client or impersonating a client talking to a server).
-
-## Future Work
-
-Encrypting files, as well as creating proper secure communication and handling confidentiality, integrity and availability properties.
+Right now, there are no limitations of the code.
 
 ## Authors
 
