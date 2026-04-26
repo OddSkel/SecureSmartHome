@@ -30,7 +30,6 @@ import java.util.Map.Entry;
 import java.util.Scanner;
 import java.util.concurrent.Semaphore;
 import java.util.stream.Stream;
-
 import javax.crypto.Cipher;
 import javax.crypto.CipherOutputStream;
 import javax.crypto.Mac;
@@ -45,7 +44,7 @@ import javax.net.ssl.SSLServerSocketFactory;
 
 public class SpertaServer {
 
-  private SSLServerSocket serverSocket;
+    private SSLServerSocket serverSocket;
     private static final int MAX_CLIENTS = 3;
     private static final Semaphore signal = new Semaphore(MAX_CLIENTS);
     private static final Semaphore command_signal = new Semaphore(1);
@@ -100,24 +99,24 @@ public class SpertaServer {
             System.exit(-1);
         }
         SSLServerSocket sSoc = null;
-    try{
-      KeyStore ks = KeyStore.getInstance("JCEKS");
-      FileInputStream fis = new FileInputStream("Keys/keystore.server");
-      ks.load(fis, "Server".toCharArray());
-      
-      KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-      kmf.init(ks, "Server".toCharArray());
+        try {
+            KeyStore ks = KeyStore.getInstance("JCEKS");
+            FileInputStream fis = new FileInputStream("Keys/keystore.server");
+            ks.load(fis, "Server".toCharArray());
 
-      SSLContext sc = SSLContext.getInstance("TLS");
-      sc.init(kmf.getKeyManagers(), null, null);
-      SSLServerSocketFactory ssf = sc.getServerSocketFactory();
-      sSoc = (SSLServerSocket) ssf.createServerSocket(port);
-      this.serverSocket = sSoc;
-    } catch(Exception e){
-      System.err.println("Error setting up SSL: " + e.getMessage());
-      System.exit(-1);
-    }
-    try {
+            KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+            kmf.init(ks, "Server".toCharArray());
+
+            SSLContext sc = SSLContext.getInstance("TLS");
+            sc.init(kmf.getKeyManagers(), null, null);
+            SSLServerSocketFactory ssf = sc.getServerSocketFactory();
+            sSoc = (SSLServerSocket) ssf.createServerSocket(port);
+            this.serverSocket = sSoc;
+        } catch (Exception e) {
+            System.err.println("Error setting up SSL: " + e.getMessage());
+            System.exit(-1);
+        }
+        try {
             System.out.println("[SERVER] Server started on port " + port);
             while (true) {
                 try {
@@ -130,31 +129,31 @@ public class SpertaServer {
                     secure_random.nextBytes(nounce);
                     check.writeObject(nounce);
                     check.flush();
-          byte[] hashBytes = null;
+                    byte[] hashBytes = null;
 
-          try{
-            byte[] jarBytes = Files.readAllBytes(Paths.get("SpertaClient.jar"));
-            byte[] combined = new byte[nounce.length + jarBytes.length];
-            System.arraycopy(nounce, 0, combined, 0, nounce.length);
-            System.arraycopy(jarBytes, 0, combined, nounce.length, jarBytes.length);
+                    try {
+                        byte[] jarBytes = Files.readAllBytes(Paths.get("SpertaClient.jar"));
+                        byte[] combined = new byte[nounce.length + jarBytes.length];
+                        System.arraycopy(nounce, 0, combined, 0, nounce.length);
+                        System.arraycopy(jarBytes, 0, combined, nounce.length, jarBytes.length);
 
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            hashBytes = md.digest(combined);
+                        MessageDigest md = MessageDigest.getInstance("SHA-256");
+                        hashBytes = md.digest(combined);
 
-          } catch (Exception e) {
-            System.err.println("[SERVER] SHA-256 algorithm not found: " + e.getMessage());
-            System.exit(-1);
-          }
+                    } catch (Exception e) {
+                        System.err.println("[SERVER] SHA-256 algorithm not found: " + e.getMessage());
+                        System.exit(-1);
+                    }
 
-					byte[] receive = (byte[]) rec.readObject();
-					if (!Arrays.equals(hashBytes, receive)) {
-						check.writeObject("NOK-ATTEST");
-						check.flush();
-						inSoc.close();
-						continue;
-					}
-					check.writeObject("OK-ATTEST");
-					check.flush();
+                    byte[] receive = (byte[]) rec.readObject();
+                    if (!Arrays.equals(hashBytes, receive)) {
+                        check.writeObject("NOK-ATTEST");
+                        check.flush();
+                        inSoc.close();
+                        continue;
+                    }
+                    check.writeObject("OK-ATTEST");
+                    check.flush();
 
                     signal.acquire();
                     ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check,
@@ -267,22 +266,26 @@ class ServerThread extends Thread {
         try {
 
             users = new File("usersLog.txt");
-            if (!users.exists()) {
-                users.createNewFile();
-            }
+			if (!users.exists()) {
+				users.createNewFile();
+				byte[] emptyMac = generateMac(macKey, new byte[0]);
+				Files.write(Path.of(users.getName() + ".mac"), emptyMac);
+			}
 
-            homes = new File("homesLog.txt");
-            if (!homes.exists()) {
-                homes.createNewFile();
-            }
+			homes = new File("homesLog.txt");
+			if (!homes.exists()) {
+				homes.createNewFile();
+				byte[] emptyMac = generateMac(macKey, new byte[0]);
+				Files.write(Path.of(homes.getName() + ".mac"), emptyMac);
+			}
 
             homesFolder = new File("homes");
             if (!homesFolder.exists()) {
                 homesFolder.mkdir();
             }
 
-            usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
-            homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
+			File usersMacFile = new File(users.getName() + ".mac");
+			File homesMacFile = new File(homes.getName() + ".mac");
 
             try {
                 //Maybe delete some things that client sends to user
@@ -296,6 +299,11 @@ class ServerThread extends Thread {
                 System.out.println("[" + user + " Thread] Authentication request received for user: " + user);
                 authenticate(client_args, serverKey);
                 while (true) {
+					if (!usersMacFile.exists() || !homesMacFile.exists()) {
+						throw new Exception("INTEGRITY VIOLATION: MAC file missing!");
+					}
+					usersMac = Files.readAllBytes(usersMacFile.toPath());
+					homesMac = Files.readAllBytes(homesMacFile.toPath());
                     try {
                         if (!verifyMac(macKey, Files.readAllBytes(users.toPath()), usersMac) || !verifyMac(macKey, Files.readAllBytes(homes.toPath()), homesMac)) {
                             throw new Exception("INTEGRITY VIOLATION");
@@ -353,52 +361,64 @@ class ServerThread extends Thread {
                                 }
                             }
                             case "ADD" -> {
-                              String userToAdd = client_Commands[1];
-                              String homeName  = client_Commands[2];
-                              String section   = client_Commands[3];
+                                String userToAdd = client_Commands[1];
+                                String homeName = client_Commands[2];
+                                String section = client_Commands[3];
 
-                              if (!userExists(userToAdd)) {
-                                  out.writeObject("USER_NOT_FOUND"); out.flush(); break;
-                              }
-                              if (!homeExists(homeName)) {
-                                  out.writeObject("HOME_NOT_FOUND"); out.flush(); break;
-                              }
-                              if (!checkOwner(homeName, user)) {
-                                  out.writeObject("NO_USER_PERMS"); out.flush(); break;
-                              }
-                              if (checkOwner(homeName, userToAdd)) {
-                                  out.writeObject("USER_ADDING_SELF"); out.flush(); break;
-                              }
-                              if (!isValidSection(section)) {
-                                  out.writeObject("INVALID_SECTION"); out.flush(); break;
-                              }
+                                if (!userExists(userToAdd)) {
+                                    out.writeObject("USER_NOT_FOUND");
+                                    out.flush();
+                                    break;
+                                }
+                                if (!homeExists(homeName)) {
+                                    out.writeObject("HOME_NOT_FOUND");
+                                    out.flush();
+                                    break;
+                                }
+                                if (!checkOwner(homeName, user)) {
+                                    out.writeObject("NO_USER_PERMS");
+                                    out.flush();
+                                    break;
+                                }
+                                if (checkOwner(homeName, userToAdd)) {
+                                    out.writeObject("USER_ADDING_SELF");
+                                    out.flush();
+                                    break;
+                                }
+                                if (!isValidSection(section)) {
+                                    out.writeObject("INVALID_SECTION");
+                                    out.flush();
+                                    break;
+                                }
 
-                              try{
-                                // Send the section key encrypted with the OWNER's public key
-                                byte[] encryptedKeyForOwner = getSectionKeyEncryptedFor(homeName, section, user);
-                                out.writeObject("SECTION_KEY");
-                                out.writeObject(encryptedKeyForOwner);
+                                try {
+                                    // Send the section key encrypted with the OWNER's public key
+                                    byte[] encryptedKeyForOwner = getSectionKeyEncryptedFor(homeName, section, user);
+                                    out.writeObject("SECTION_KEY");
+                                    out.writeObject(encryptedKeyForOwner);
+                                    out.flush();
+
+                                    // Receive the re-encrypted key (encrypted for userToAdd)
+                                    byte[] reEncryptedKey = (byte[]) in.readObject();
+
+                                    // Save as key.<hm>.<s>.<user>
+                                    saveSectionKey(homeName, section, userToAdd, reEncryptedKey);
+
+                                    // Now add user to home
+                                    addUserToHome(userToAdd, homeName, section);
+
+                                    usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
+                                    Files.write(Path.of(users.getName() + ".mac"), usersMac);
+                                    homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
+                                    Files.write(Path.of(homes.getName() + ".mac"), homesMac);
+                                } catch (Exception e) {
+                                    System.err.println("Error in ADD command: " + e.getMessage());
+                                    System.exit(-1);
+                                }
+
+                                out.writeObject("USER_ADDED");
                                 out.flush();
-
-                                // Receive the re-encrypted key (encrypted for userToAdd)
-                                byte[] reEncryptedKey = (byte[]) in.readObject();
-
-                                // Save as key.<hm>.<s>.<user>
-                                saveSectionKey(homeName, section, userToAdd, reEncryptedKey);
-
-                                // Now add user to home
-                                addUserToHome(userToAdd, homeName, section);
-
-                                usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
-                                homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
-                              }catch(Exception e){
-                                System.err.println("Error in ADD command: " + e.getMessage());
-                                System.exit(-1);
-                              }
-
-                              out.writeObject("USER_ADDED");
-                              out.flush();
-                          }
+                            }
                             case "RD" -> {
                                 int result = verify(client_Commands, user);
                                 switch (result) {
@@ -576,10 +596,10 @@ class ServerThread extends Thread {
                                         byte[] logBytes = Files.readAllBytes(logFile.toPath());
                                         out.writeObject(logBytes);
 
-										Key homeKey = getKey(keyFile);
-										SecretKey homeMacKey = deriveMacKey(homeKey);
-										byte[] logMac = generateMac(homeMacKey, logBytes);
-										out.writeObject(logMac);
+                                        Key homeKey = getKey(keyFile);
+                                        SecretKey homeMacKey = deriveMacKey(homeKey);
+                                        byte[] logMac = generateMac(homeMacKey, logBytes);
+                                        out.writeObject(logMac);
 
                                         out.flush();
                                     } catch (Exception e) {
@@ -636,10 +656,10 @@ class ServerThread extends Thread {
                                         byte[] fileContent = Files.readAllBytes(logFile.toPath());
                                         out.writeObject(fileContent);
 
-										Key sectionKey = getKey(keyFile);
-										SecretKey sectionMacKey = deriveMacKey(sectionKey);
-										byte[] fileMac = generateMac(sectionMacKey, fileContent);
-										out.writeObject(fileMac);
+                                        Key sectionKey = getKey(keyFile);
+                                        SecretKey sectionMacKey = deriveMacKey(sectionKey);
+                                        byte[] fileMac = generateMac(sectionMacKey, fileContent);
+                                        out.writeObject(fileMac);
 
                                         System.out.println("[" + user + " Thread] RH: Enviada chave e " + fileContent.length + " bytes para " + dev);
                                     }
@@ -662,6 +682,9 @@ class ServerThread extends Thread {
             } catch (InterruptedException e) {
                 System.err.println(e.getMessage());
                 Thread.currentThread().interrupt();
+            } catch (Exception e) {
+                System.err.println(e.getMessage());
+				System.exit(-1);
             }
         } catch (IOException ex) {
             System.out.println("Client disconnected!");
@@ -760,6 +783,7 @@ class ServerThread extends Thread {
             Files.copy(Path.of("users_dec.txt"), users.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             cipher(users, serverKey);
             usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
+            Files.write(Path.of(users.getName() + ".mac"), usersMac);
             out.writeObject("SEND_CERT");
             out.flush();
             File cer = new File("Certs", user + ".cer");
@@ -917,7 +941,9 @@ class ServerThread extends Thread {
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 cipher(homes, serverKey);
                 homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
+                Files.write(Path.of(homes.getName() + ".mac"), homesMac);
                 devicesLogMac = generateMac(macKey, Files.readAllBytes(devicesFile.toPath()));
+                Files.write(Path.of(devicesFile.getPath() + ".mac"), devicesLogMac);
                 decFile.delete();
                 System.out.println("[" + user + " Thread] Home created: " + homeName);
                 out.writeObject("HOME_CREATED");
@@ -1176,6 +1202,7 @@ class ServerThread extends Thread {
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 cipher(homes, serverKey);
                 homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
+                Files.write(Path.of(homes.getName() + ".mac"), homesMac);
                 decFile.delete();
                 return 1; // OK
             } else {
