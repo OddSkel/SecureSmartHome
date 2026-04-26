@@ -15,6 +15,10 @@ find . -name "*.txt" -delete
 # Remove all .csv files recursivel
 find . -name "*.csv" -delete
 
+find . -name "*.mac" -delete
+
+find . -name "*.salt" -delete
+
 # Remove the homes folder and everything inside
 if [ -d "homes" ]; then
     rm -rf "homes"
