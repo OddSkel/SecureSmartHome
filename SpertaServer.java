@@ -16,10 +16,7 @@ import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
-import java.security.PublicKey;
 import java.security.SecureRandom;
-import java.security.cert.Certificate;
-import java.security.spec.KeySpec;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -79,7 +76,7 @@ public class SpertaServer {
             macKey = (SecretKey) serverKeys[1];
 
             File salt = new File(SALT_FILE);
-            File saltMacFile = new File(SALT_FILE + ".mac");
+            File saltMacFile = new File(SALT_FILE + ".hash");
             byte[] saltBytes = Files.readAllBytes(salt.toPath());
 
             if (saltMacFile.exists()) {
@@ -266,26 +263,26 @@ class ServerThread extends Thread {
         try {
 
             users = new File("usersLog.txt");
-			if (!users.exists()) {
-				users.createNewFile();
-				byte[] emptyMac = generateMac(macKey, new byte[0]);
-				Files.write(Path.of(users.getName() + ".mac"), emptyMac);
-			}
+            if (!users.exists()) {
+                users.createNewFile();
+                byte[] emptyMac = generateMac(macKey, new byte[0]);
+                Files.write(Path.of(users.getName() + ".hash"), emptyMac);
+            }
 
-			homes = new File("homesLog.txt");
-			if (!homes.exists()) {
-				homes.createNewFile();
-				byte[] emptyMac = generateMac(macKey, new byte[0]);
-				Files.write(Path.of(homes.getName() + ".mac"), emptyMac);
-			}
+            homes = new File("homesLog.txt");
+            if (!homes.exists()) {
+                homes.createNewFile();
+                byte[] emptyMac = generateMac(macKey, new byte[0]);
+                Files.write(Path.of(homes.getName() + ".hash"), emptyMac);
+            }
 
             homesFolder = new File("homes");
             if (!homesFolder.exists()) {
                 homesFolder.mkdir();
             }
 
-			File usersMacFile = new File(users.getName() + ".mac");
-			File homesMacFile = new File(homes.getName() + ".mac");
+            File usersMacFile = new File(users.getName() + ".hash");
+            File homesMacFile = new File(homes.getName() + ".hash");
 
             try {
                 //Maybe delete some things that client sends to user
@@ -299,11 +296,11 @@ class ServerThread extends Thread {
                 System.out.println("[" + user + " Thread] Authentication request received for user: " + user);
                 authenticate(client_args, serverKey);
                 while (true) {
-					if (!usersMacFile.exists() || !homesMacFile.exists()) {
-						throw new Exception("INTEGRITY VIOLATION: MAC file missing!");
-					}
-					usersMac = Files.readAllBytes(usersMacFile.toPath());
-					homesMac = Files.readAllBytes(homesMacFile.toPath());
+                    if (!usersMacFile.exists() || !homesMacFile.exists()) {
+                        throw new Exception("INTEGRITY VIOLATION: MAC file missing!");
+                    }
+                    usersMac = Files.readAllBytes(usersMacFile.toPath());
+                    homesMac = Files.readAllBytes(homesMacFile.toPath());
                     try {
                         if (!verifyMac(macKey, Files.readAllBytes(users.toPath()), usersMac) || !verifyMac(macKey, Files.readAllBytes(homes.toPath()), homesMac)) {
                             throw new Exception("INTEGRITY VIOLATION");
@@ -320,106 +317,98 @@ class ServerThread extends Thread {
                             case "CREATE" -> {
                                 String houseName = client_Commands[1];
                                 System.out.println("[" + user + " Thread] CREATE command received for home: " + houseName);
+								File decCheck = new File("ho_dec_check_" + user + ".txt");
+								if (homes.length() != 0) decipher(serverKey, homes, decCheck.getName());
+								else decCheck.createNewFile();
+								boolean exists = homeExists(houseName, decCheck);
+								decCheck.delete();
                                 createHome(houseName);
-                                try {
-                                    // 1. Carregar Keystore e Certificado UMA ÚNICA VEZ
-                                    File kS = new File("Keys", keystore);
-                                    FileInputStream kfile = new FileInputStream(kS);
-                                    KeyStore kstore = KeyStore.getInstance("JCEKS");
-                                    kstore.load(kfile, pass_keystore.toCharArray());
-                                    Certificate cert = kstore.getCertificate("keyrsa");
-                                    PublicKey pk = cert.getPublicKey();
-                                    Cipher cRSA = Cipher.getInstance("RSA");
-                                    cRSA.init(Cipher.WRAP_MODE, pk);
-
-                                    SecretKeyFactory factory = SecretKeyFactory.getInstance("PBEWithHmacSHA256AndAES_128");
-
-                                    // 2. Criar e Guardar a Chave da Casa (Geral)
-                                    KeySpec specHome = new PBEKeySpec(pwd.toCharArray(), generateSalt(), 20);
-                                    SecretKey tmpHome = factory.generateSecret(specHome);
-                                    SecretKey homeKey = new SecretKeySpec(Arrays.copyOf(tmpHome.getEncoded(), 16), "AES");
-
-                                    File homeKeyFile = new File("homes/" + houseName, "key." + houseName + "." + user);
-                                    try (FileOutputStream keyHomeOut = new FileOutputStream(homeKeyFile)) {
-                                        keyHomeOut.write(cRSA.wrap(homeKey));
-                                    }
-
-                                    // 3. Criar e Guardar as Chaves das Secções (Loop)
-                                    for (String section : Arrays.asList(Arrays.copyOfRange(PERMS, 1, PERMS.length))) {
-                                        KeySpec specSec = new PBEKeySpec(pwd.toCharArray(), generateSalt(), 20);
-                                        SecretKey tmpSec = factory.generateSecret(specSec);
-                                        SecretKey secKey = new SecretKeySpec(Arrays.copyOf(tmpSec.getEncoded(), 16), "AES");
-
-                                        File secKeyFile = new File("homes/" + houseName + "/" + section, "key." + houseName + "." + section + "." + user);
-                                        try (FileOutputStream keySecOut = new FileOutputStream(secKeyFile)) {
-                                            keySecOut.write(cRSA.wrap(secKey));
-                                        }
-                                    }
-                                  usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
-                                  homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
-                                } catch (Exception e) {
-                                    System.err.println("Erro ao gerar chaves no CREATE: " + e.getMessage());
-                                    System.exit(-1);
-                                }
+								if (!exists) {
+									try {
+										// Receive and store home key from client
+										byte[] wrappedHomeKey = (byte[]) in.readObject();
+										File homeKeyFile = new File("homes/" + houseName, "key." + houseName + "." + user);
+										Files.write(homeKeyFile.toPath(), wrappedHomeKey);
+	
+										// Receive and store one section key per section from client
+										String[] sections = {"E", "G", "L", "M", "P", "S"};
+										for (String section : sections) {
+											byte[] wrappedSectionKey = (byte[]) in.readObject();
+											File secKeyFile = new File("homes/" + houseName + "/" + section,
+													"key." + houseName + "." + section + "." + user);
+											Files.write(secKeyFile.toPath(), wrappedSectionKey);
+										}
+	
+										usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
+										homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
+									} catch (Exception e) {
+										System.err.println("Erro ao gerar chaves no CREATE: " + e.getMessage());
+										System.exit(-1);
+									}
+								}
                             }
                             case "ADD" -> {
                                 String userToAdd = client_Commands[1];
                                 String homeName = client_Commands[2];
                                 String section = client_Commands[3];
 
-                                if (!userExists(userToAdd)) {
-                                    out.writeObject("USER_NOT_FOUND");
-                                    out.flush();
-                                    break;
-                                }
-                                if (!homeExists(homeName)) {
-                                    out.writeObject("HOME_NOT_FOUND");
-                                    out.flush();
-                                    break;
-                                }
-                                if (!checkOwner(homeName, user)) {
-                                    out.writeObject("NO_USER_PERMS");
-                                    out.flush();
-                                    break;
-                                }
-                                if (checkOwner(homeName, userToAdd)) {
-                                    out.writeObject("USER_ADDING_SELF");
-                                    out.flush();
-                                    break;
-                                }
-                                if (!isValidSection(section)) {
-                                    out.writeObject("INVALID_SECTION");
-                                    out.flush();
-                                    break;
-                                }
-
+                                File decUsersFile = new File("users_dec_" + user + ".txt");
+                                File decHomesFile = new File("ho_dec_" + user + ".txt");
                                 try {
-                                    // Send the section key encrypted with the OWNER's public key
-                                    byte[] encryptedKeyForOwner = getSectionKeyEncryptedFor(homeName, section, user);
-                                    out.writeObject("SECTION_KEY");
-                                    out.writeObject(encryptedKeyForOwner);
+                                    if (users.length() != 0) {
+                                        decipher(serverKey, users, decUsersFile.getName());
+                                    } else {
+                                        decUsersFile.createNewFile();
+                                    }
+                                    if (homes.length() != 0) {
+                                        decipher(serverKey, homes, decHomesFile.getName());
+                                    } else {
+                                        decHomesFile.createNewFile();
+                                    }
+
+                                    if (!userExists(userToAdd, decUsersFile)) {
+                                        out.writeObject("USER_NOT_FOUND");
+                                    } else if (!homeExists(homeName, decHomesFile)) {
+                                        out.writeObject("HOME_NOT_FOUND");
+                                    } else if (!checkOwner(homeName, user, decHomesFile)) {
+                                        out.writeObject("NO_USER_PERMS");
+                                    } else if (checkOwner(homeName, userToAdd, decHomesFile)) {
+                                        out.writeObject("USER_ADDING_SELF");
+                                    } else if (!isValidSection(section)) {
+                                        out.writeObject("INVALID_SECTION");
+                                    } else {
+                                        try {
+                                            // Send the section key encrypted with the OWNER's public key
+                                            byte[] encryptedKeyForOwner = getSectionKeyEncryptedFor(homeName, section, user);
+                                            out.writeObject("SECTION_KEY");
+                                            out.writeObject(encryptedKeyForOwner);
+                                            out.flush();
+                                            byte[] encryptedHomeKeyForOwner = getHomeKeyEncryptedFor(homeName, user);
+                                            out.writeObject(encryptedHomeKeyForOwner);
+                                            out.flush();
+                                            // Receive the re-encrypted key (encrypted for userToAdd)
+                                            byte[] reEncryptedKey = (byte[]) in.readObject();
+                                            // Save as key.<hm>.<s>.<user>
+                                            saveSectionKey(homeName, section, userToAdd, reEncryptedKey);
+                                            byte[] reEncryptedHomeKey = (byte[]) in.readObject();
+                                            saveHomeKey(homeName, userToAdd, reEncryptedHomeKey);
+                                            // Now add user to home
+                                            addUserToHome(userToAdd, homeName, section, decHomesFile);
+                                            usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
+                                            Files.write(Path.of(users.getName() + ".hash"), usersMac);
+                                            homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
+                                            Files.write(Path.of(homes.getName() + ".hash"), homesMac);
+                                        } catch (Exception e) {
+                                            System.err.println("Error in ADD command: " + e.getMessage());
+                                            System.exit(-1);
+                                        }
+                                        out.writeObject("USER_ADDED");
+                                    }
+                                } finally {
+                                    decUsersFile.delete();
+                                    decHomesFile.delete();
                                     out.flush();
-
-                                    // Receive the re-encrypted key (encrypted for userToAdd)
-                                    byte[] reEncryptedKey = (byte[]) in.readObject();
-
-                                    // Save as key.<hm>.<s>.<user>
-                                    saveSectionKey(homeName, section, userToAdd, reEncryptedKey);
-
-                                    // Now add user to home
-                                    addUserToHome(userToAdd, homeName, section);
-
-                                    usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
-                                    Files.write(Path.of(users.getName() + ".mac"), usersMac);
-                                    homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
-                                    Files.write(Path.of(homes.getName() + ".mac"), homesMac);
-                                } catch (Exception e) {
-                                    System.err.println("Error in ADD command: " + e.getMessage());
-                                    System.exit(-1);
                                 }
-
-                                out.writeObject("USER_ADDED");
-                                out.flush();
                             }
                             case "RD" -> {
                                 int result = verify(client_Commands, user);
@@ -445,7 +434,7 @@ class ServerThread extends Thread {
                                             byte[] fileMac = generateMac(rdMacKey, fileBytes);
                                             out.writeObject(fileMac);
                                             matchingFiles[0].delete();
-                                            new File(matchingFiles[0].getPath() + ".mac").delete();
+                                            new File(matchingFiles[0].getPath() + ".hash").delete();
                                         } else {
                                             out.writeObject(new String[]{"OK", "0"});
                                             out.writeObject(keyBytes);
@@ -463,7 +452,7 @@ class ServerThread extends Thread {
 
                                         File deviceFile = new File(dir, name);
                                         Files.write(deviceFile.toPath(), newFileBytes);
-                                        Files.write(Path.of(deviceFile.getPath() + ".mac"), newMac);
+                                        Files.write(Path.of(deviceFile.getPath() + ".hash"), newMac);
                                     }
                                     case -1 ->
                                         out.writeObject(new String[]{"NOHM"});
@@ -477,9 +466,9 @@ class ServerThread extends Thread {
                                 String dev = client_Commands[2];
                                 String section = dev.substring(0, 1).toUpperCase();
 
-                                File decFile = new File("ho_dec.txt");
+                                File decFile = new File("ho_dec_" + user + ".txt");
                                 if (homes.length() != 0) {
-                                    decipher(serverKey, homes, "ho_dec.txt");
+                                    decipher(serverKey, homes, decFile.getName());
                                 } else {
                                     decFile.createNewFile();
                                 }
@@ -520,7 +509,7 @@ class ServerThread extends Thread {
 
                                         // 3. Envia o devicesLog cifrado e o seu MAC
                                         File globalLog = new File("homes/" + hm + "/devicesLog.txt");
-                                        File globalLogMac = new File("homes/" + hm + "/devicesLog.txt.mac");
+                                        File globalLogMac = new File("homes/" + hm + "/devicesLog.txt.hash");
                                         if (globalLog.exists() && globalLog.length() > 0) {
                                             byte[] encryptedLog = Files.readAllBytes(globalLog.toPath());
                                             out.writeObject(encryptedLog);
@@ -549,7 +538,7 @@ class ServerThread extends Thread {
                                             fos.write(encryptedDataFromClient);
                                         }
                                         // Save section MAC
-                                        Files.write(new File(devFile.getPath() + ".mac").toPath(), sectionMac);
+                                        Files.write(new File(devFile.getPath() + ".hash").toPath(), sectionMac);
 
                                         // 5. Recebe do cliente o devicesLog cifrado já atualizado
                                         byte[] updatedEncryptedLog = (byte[]) in.readObject();
@@ -598,9 +587,10 @@ class ServerThread extends Thread {
                                         byte[] logBytes = Files.readAllBytes(logFile.toPath());
                                         out.writeObject(logBytes);
 
-                                        Key homeKey = getKey(keyFile);
-                                        SecretKey homeMacKey = deriveMacKey(homeKey);
-                                        byte[] logMac = generateMac(homeMacKey, logBytes);
+                                        File logMacFile = new File("homes/" + client_Commands[1] + "/devicesLog.txt.hash");
+                                        byte[] logMac = logMacFile.exists()
+                                                ? Files.readAllBytes(logMacFile.toPath())
+                                                : new byte[0];
                                         out.writeObject(logMac);
 
                                         out.flush();
@@ -609,7 +599,7 @@ class ServerThread extends Thread {
                                         System.exit(-1);
                                     }
                                 } else {
-                                    switch ((int) result.getKey()) {
+                                    switch ((int) result.getKey().intValue()) {
                                         case 1 ->
                                             out.writeObject(new String[]{"NOPERM"});
                                         case -2 ->
@@ -626,9 +616,9 @@ class ServerThread extends Thread {
                                 String dev = client_Commands[2];
                                 String section = dev.substring(0, 1).toUpperCase();
 
-                                File decFile = new File("ho_dec.txt");
+                                File decFile = new File("ho_dec_" + user + ".txt");
                                 if (homes.length() != 0) {
-                                    decipher(serverKey, homes, "ho_dec.txt");
+                                    decipher(serverKey, homes, decFile.getName());
                                 } else {
                                     decFile.createNewFile();
                                 }
@@ -669,7 +659,17 @@ class ServerThread extends Thread {
                                 decFile.delete();
                                 out.flush();
                             }
-
+							case "GET_CERT" -> {
+                                String targetUser = client_Commands[1];
+                                File certFile = new File("Certs", targetUser + ".cer");
+                                if (certFile.exists()) {
+                                    out.writeObject("SEND_CERT");
+                                    out.writeObject(Files.readAllBytes(certFile.toPath()));
+                                } else {
+                                    out.writeObject("NO_CERT");
+                                }
+                                out.flush();
+                            }
                             default ->
                                 out.writeObject("NOCOMMAND");
                         }
@@ -685,8 +685,7 @@ class ServerThread extends Thread {
                 System.err.println(e.getMessage());
                 Thread.currentThread().interrupt();
             } catch (Exception e) {
-                System.err.println(e.getMessage());
-				System.exit(-1);
+                System.out.println("Client disconnected!");
             }
         } catch (IOException ex) {
             System.out.println("Client disconnected!");
@@ -696,6 +695,18 @@ class ServerThread extends Thread {
                 socket.close();
             } catch (IOException ignored) {
             }
+        }
+    }
+
+    private byte[] getHomeKeyEncryptedFor(String homeName, String user) throws Exception {
+        File homeKeyFile = new File("homes/" + homeName, "key." + homeName + "." + user);
+        return Files.readAllBytes(homeKeyFile.toPath());
+    }
+
+    private void saveHomeKey(String homeName, String userToAdd, byte[] encryptedKey) throws Exception {
+        File homeKeyFile = new File("homes/" + homeName, "key." + homeName + "." + userToAdd);
+        try (FileOutputStream fos = new FileOutputStream(homeKeyFile)) {
+            fos.write(encryptedKey);
         }
     }
 
@@ -785,7 +796,7 @@ class ServerThread extends Thread {
             Files.copy(Path.of("users_dec.txt"), users.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             cipher(users, serverKey);
             usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
-            Files.write(Path.of(users.getName() + ".mac"), usersMac);
+            Files.write(Path.of(users.getName() + ".hash"), usersMac);
             out.writeObject("SEND_CERT");
             out.flush();
             File cer = new File("Certs", user + ".cer");
@@ -890,8 +901,8 @@ class ServerThread extends Thread {
         byte[] hash;
         try {
             md = MessageDigest.getInstance("SHA-256");
-            md.update(salt);
-            hash = md.digest(pwd2.getBytes());
+            md.update(pwd2.getBytes());
+            hash = md.digest(salt);
             return Base64.getEncoder().encodeToString(hash);
         } catch (NoSuchAlgorithmException e) {
             System.err.println(e.getMessage());
@@ -908,14 +919,14 @@ class ServerThread extends Thread {
 
     private void createHome(String homeName) {
         try {
-            File decFile = new File("ho_dec.txt");
+            File decFile = new File("ho_dec_" + user + ".txt");
             if (homes.length() != 0) {
-                decipher(serverKey, homes, "ho_dec.txt");
+                decipher(serverKey, homes, decFile.getName());
             } else {
                 decFile.createNewFile();
             }
 
-            if (homeExists(homeName, new File("ho_dec.txt"))) {
+            if (homeExists(homeName, decFile)) {
 
                 out.writeObject("HOME_EXISTS");
                 out.flush();
@@ -943,9 +954,9 @@ class ServerThread extends Thread {
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 cipher(homes, serverKey);
                 homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
-                Files.write(Path.of(homes.getName() + ".mac"), homesMac);
+                Files.write(Path.of(homes.getName() + ".hash"), homesMac);
                 devicesLogMac = generateMac(macKey, Files.readAllBytes(devicesFile.toPath()));
-                Files.write(Path.of(devicesFile.getPath() + ".mac"), devicesLogMac);
+                Files.write(Path.of(devicesFile.getPath() + ".hash"), devicesLogMac);
                 decFile.delete();
                 System.out.println("[" + user + " Thread] Home created: " + homeName);
                 out.writeObject("HOME_CREATED");
@@ -959,7 +970,11 @@ class ServerThread extends Thread {
     }
 
     private boolean userExists(String user) {
-        try (Scanner sc = new Scanner(users)) {
+        return userExists(user, users);
+    }
+
+    private boolean userExists(String user, File f) {
+        try (Scanner sc = new Scanner(f)) {
             while (sc.hasNextLine()) {
                 String[] credentials = sc.nextLine().split(":");
                 if (credentials[0].equals(user)) {
@@ -1014,10 +1029,10 @@ class ServerThread extends Thread {
         return false;
     }
 
-    private void addUserToHome(String userToAdd, String homeName, String section) {
+    private void addUserToHome(String userToAdd, String homeName, String section, File decHomesFile) {
         List<String> lines = new ArrayList<>();
 
-        try (Scanner sc = new Scanner(homes)) {
+        try (Scanner sc = new Scanner(decHomesFile)) {
             while (sc.hasNextLine()) {
                 String line = sc.nextLine();
                 String[] parts = line.split(">");
@@ -1066,13 +1081,13 @@ class ServerThread extends Thread {
                 lines.add(parts[0] + ">" + newUsersPart + sectionsPart);
             }
 
-            try (FileWriter fw = new FileWriter(homes, false)) {
+            try (FileWriter fw = new FileWriter(decHomesFile, false)) {
                 for (String l : lines) {
                     fw.write(l + System.lineSeparator());
                 }
             }
-            out.writeObject("USER_ADDED");
-            out.flush();
+            Files.copy(decHomesFile.toPath(), homes.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            cipher(homes, serverKey);
             System.out.println("[" + user + " Thread] User " + userToAdd + " added to home " + homeName + " with section " + section);
 
         } catch (IOException e) {
@@ -1101,10 +1116,10 @@ class ServerThread extends Thread {
     }
 
     private Map.Entry<Number, String[]> getHistory(String house, String user) {
-        File decFile = new File("ho_dec.txt");
+        File decFile = new File("ho_dec_" + user + ".txt");
         try {
             if (homes.length() != 0) {
-                decipher(serverKey, homes, "ho_dec.txt");
+                decipher(serverKey, homes, decFile.getName());
             } else {
                 decFile.createNewFile();
             }
@@ -1114,7 +1129,7 @@ class ServerThread extends Thread {
                 decFile.delete();
                 return Map.entry(-1, new String[0]); // NOHM
             }
-            try (Scanner sc = new Scanner(new File("homesLog.txt"))) {
+            try (Scanner sc = new Scanner(decFile)) {
                 List<String> latestByDevice = new ArrayList<>();
                 File devicesLog = new File(home.getPath() + "/devicesLog.txt");
 
@@ -1134,9 +1149,7 @@ class ServerThread extends Thread {
                                 if (user.equals(devices[0])) {
                                     String[] device_User = devices[1].split(",");
                                     for (String line : device_User) {
-                                        if (line.equals(devices[1]) || devices[1].equals("all")) {
-                                            latestByDevice.add(line);
-                                        }
+                                        latestByDevice.add(line);
                                     }
                                 }
                             }
@@ -1162,10 +1175,10 @@ class ServerThread extends Thread {
 
     private int verify(String[] commands, String user) {
 
-        File decFile = new File("ho_dec.txt");
+        File decFile = new File("ho_dec_" + user + ".txt");
         try {
             if (homes.length() != 0) {
-                decipher(serverKey, homes, "ho_dec.txt");
+                decipher(serverKey, homes, decFile.getName());
             } else {
                 return -1; // no homes at all
             }
@@ -1204,7 +1217,7 @@ class ServerThread extends Thread {
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 cipher(homes, serverKey);
                 homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
-                Files.write(Path.of(homes.getName() + ".mac"), homesMac);
+                Files.write(Path.of(homes.getName() + ".hash"), homesMac);
                 decFile.delete();
                 return 1; // OK
             } else {

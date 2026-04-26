@@ -15,7 +15,7 @@ find . -name "*.txt" -delete
 # Remove all .csv files recursivel
 find . -name "*.csv" -delete
 
-find . -name "*.mac" -delete
+find . -name "*.hash" -delete
 
 find . -name "*.salt" -delete
 

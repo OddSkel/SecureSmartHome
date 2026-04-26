@@ -24,9 +24,9 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Scanner;
-
 import javax.crypto.Cipher;
 import javax.crypto.CipherOutputStream;
+import javax.crypto.KeyGenerator;
 import javax.crypto.Mac;
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
@@ -93,42 +93,39 @@ public class SpertaClient {
         client.startClient();
     }
 
-  public void startClient(){
-    System.setProperty("javax.net.ssl.trustStore", "Certs/truststore.client");
-    System.setProperty("javax.net.ssl.trustStorePassword", "Truststore");
-    SocketFactory sf = SSLSocketFactory.getDefault();
-    try(SSLSocket cliSoc = (SSLSocket)sf.createSocket(host, port);
-        //Socket cliSoc = new Socket(host, port);
-        ObjectOutputStream outStream = new ObjectOutputStream(cliSoc.getOutputStream());
-        ObjectInputStream inStream = new ObjectInputStream(cliSoc.getInputStream());
-        Scanner user_input = new Scanner(System.in)) {
-        
-        try{
-          byte[] nounce_rec = (byte[]) inStream.readObject();
-          byte[] jarBytes = Files.readAllBytes(Paths.get("SpertaClient.jar"));
-          byte[] combined = new byte[nounce_rec.length + jarBytes.length];
-          System.arraycopy(nounce_rec, 0, combined, 0, nounce_rec.length);
-          System.arraycopy(jarBytes, 0, combined, nounce_rec.length, jarBytes.length);
+    public void startClient() {
+        System.setProperty("javax.net.ssl.trustStore", "Certs/truststore.client");
+        System.setProperty("javax.net.ssl.trustStorePassword", "Truststore");
+        SocketFactory sf = SSLSocketFactory.getDefault();
+        try (SSLSocket cliSoc = (SSLSocket) sf.createSocket(host, port); //Socket cliSoc = new Socket(host, port);
+                 ObjectOutputStream outStream = new ObjectOutputStream(cliSoc.getOutputStream()); ObjectInputStream inStream = new ObjectInputStream(cliSoc.getInputStream()); Scanner user_input = new Scanner(System.in)) {
 
-          MessageDigest md = MessageDigest.getInstance("SHA-256");
-          byte[] hashBytes = md.digest(combined);
+            try {
+                byte[] nounce_rec = (byte[]) inStream.readObject();
+                byte[] jarBytes = Files.readAllBytes(Paths.get("SpertaClient.jar"));
+                byte[] combined = new byte[nounce_rec.length + jarBytes.length];
+                System.arraycopy(nounce_rec, 0, combined, 0, nounce_rec.length);
+                System.arraycopy(jarBytes, 0, combined, nounce_rec.length, jarBytes.length);
 
-          outStream.writeObject(hashBytes);
-          outStream.flush();
-        } catch (Exception e) {
-          System.err.println("SHA-256 algorithm not found: " + e.getMessage());
-          System.exit(-1);
-        }
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                byte[] hashBytes = md.digest(combined);
 
-        String integrity_check = (String) inStream.readObject();
-        if (integrity_check.equals("OK-ATTEST")) {
-          outStream.writeObject(truststore);
-          outStream.writeObject(pass_truststore);
-          outStream.writeObject(keystore);
-          outStream.writeObject(pass_keystore);
-          outStream.writeObject(user);
-          outStream.writeObject(pwd);
-          outStream.flush();
+                outStream.writeObject(hashBytes);
+                outStream.flush();
+            } catch (Exception e) {
+                System.err.println("SHA-256 algorithm not found: " + e.getMessage());
+                System.exit(-1);
+            }
+
+            String integrity_check = (String) inStream.readObject();
+            if (integrity_check.equals("OK-ATTEST")) {
+                outStream.writeObject(truststore);
+                outStream.writeObject(pass_truststore);
+                outStream.writeObject(keystore);
+                outStream.writeObject(pass_keystore);
+                outStream.writeObject(user);
+                outStream.writeObject(pwd);
+                outStream.flush();
 
                 checkSResp(inStream, outStream, user_input);
 
@@ -157,8 +154,37 @@ public class SpertaClient {
                                 outStream.writeObject(command_Args);
                                 outStream.flush();
                                 String server_Response = (String) inStream.readObject();
-                                String response = server_Response.equals("HOME_CREATED") ? "OK" : "NOK";
-                                System.out.println(response);
+                                if ("HOME_CREATED".equals(server_Response)) {
+                                    try {
+                                        // Load owner's public key from keystore
+                                        KeyStore ks = KeyStore.getInstance("JCEKS");
+                                        ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
+                                        PublicKey pk = ks.getCertificate("keyrsa").getPublicKey();
+                                        Cipher cRSA = Cipher.getInstance("RSA");
+                                        cRSA.init(Cipher.WRAP_MODE, pk);
+
+                                        KeyGenerator kg = KeyGenerator.getInstance("AES");
+                                        kg.init(128);
+
+                                        // Generate and send home key
+                                        SecretKey homeKey = kg.generateKey();
+                                        outStream.writeObject(cRSA.wrap(homeKey));
+
+                                        // Generate and send one section key per section
+                                        String[] sections = {"E", "G", "L", "M", "P", "S"};
+                                        for (String section : sections) {
+                                            SecretKey sectionKey = kg.generateKey();
+                                            outStream.writeObject(cRSA.wrap(sectionKey));
+                                        }
+                                        outStream.flush();
+                                        System.out.println("OK");
+                                    } catch (Exception e) {
+                                        System.err.println("Error generating keys in CREATE: " + e.getMessage());
+                                        System.exit(-1);
+                                    }
+                                } else {
+                                    System.out.println("NOK");
+                                }
                             }
                         }
                         case "ADD" -> {
@@ -172,24 +198,23 @@ public class SpertaClient {
                             }
 
                             String userToAdd = command_Args[1];
-                            String homeName  = command_Args[2];
-                            String section   = command_Args[3];
+                            String homeName = command_Args[2];
+                            String section = command_Args[3];
 
                             // 1. Check if we have the user's certificate locally
                             PublicKey userPublicKey = null;
                             File certFile = new File("Certs/" + userToAdd + ".cer");
 
                             if (certFile.exists()) {
-                              try{  
-                                // Load certificate from local storage
-                                CertificateFactory cf = CertificateFactory.getInstance("X.509");
-                                FileInputStream certInput = new FileInputStream(certFile);
-                                Certificate cert = cf.generateCertificate(certInput);
-                                userPublicKey = cert.getPublicKey();
-                              }catch(Exception e){
-                                System.err.println("Error loading local certificate: " + e.getMessage());
-                                break;
-                              }
+                                try {
+                                    CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                                    FileInputStream certInput = new FileInputStream(certFile);
+                                    Certificate cert = cf.generateCertificate(certInput);
+                                    userPublicKey = cert.getPublicKey();
+                                } catch (Exception e) {
+                                    System.err.println("Error loading local certificate: " + e.getMessage());
+                                    break;
+                                }
                             } else {
                                 // 2. Request certificate from server
                                 outStream.writeObject(new String[]{"GET_CERT", userToAdd});
@@ -201,19 +226,16 @@ public class SpertaClient {
                                     break;
                                 }
 
-                                try{
-                                  // Receive and save the certificate
-                                  byte[] certBytes = (byte[]) inStream.readObject();
-                                  CertificateFactory cf = CertificateFactory.getInstance("X.509");
-                                  Certificate cert = cf.generateCertificate(new ByteArrayInputStream(certBytes));
-                                  userPublicKey = cert.getPublicKey();
-
-                                  // Save locally for future use
-                                  Files.createDirectories(Paths.get("Certs"));
-                                  Files.write(certFile.toPath(), certBytes);
+                                try {
+                                    byte[] certBytes = (byte[]) inStream.readObject();
+                                    CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                                    Certificate cert = cf.generateCertificate(new ByteArrayInputStream(certBytes));
+                                    userPublicKey = cert.getPublicKey();
+                                    Files.createDirectories(Paths.get("Certs"));
+                                    Files.write(certFile.toPath(), certBytes);
                                 } catch (Exception e) {
-                                  System.err.println("Error handling certificate: " + e.getMessage());
-                                  break;
+                                    System.err.println("Error handling certificate: " + e.getMessage());
+                                    break;
                                 }
                             }
 
@@ -221,45 +243,63 @@ public class SpertaClient {
                             outStream.writeObject(command_Args);
                             outStream.flush();
 
-                            // 4. Request the Section Key encrypted with OUR public key
-                            //    Server responds with "SEND_SECTION_KEY" + the encrypted key
+                            // 4. Read server response - could be error or SECTION_KEY
                             String keyResponse = (String) inStream.readObject();
-                            if (!keyResponse.equals("SECTION_KEY")) {
-                                System.out.println("NOKEY");
-                                break;
-                            }
+                            switch (keyResponse) {
+                                case "USER_NOT_FOUND" ->
+                                    System.out.println("NOUSER");
+                                case "HOME_NOT_FOUND" ->
+                                    System.out.println("NOHM");
+                                case "NO_USER_PERMS" ->
+                                    System.out.println("NOPERM");
+                                case "USER_ADDING_SELF" ->
+                                    System.out.println("NOK # cannot add yourself");
+                                case "INVALID_SECTION" ->
+                                    System.out.println("NOK # invalid section");
+                                case "SECTION_KEY" -> {
+                                    try {
+                                        byte[] encryptedSectionKey = (byte[]) inStream.readObject();
+                                        byte[] encryptedHomeKey = (byte[]) inStream.readObject();
 
-                            try {
-                              byte[] encryptedSectionKey = (byte[]) inStream.readObject();
+                                        KeyStore kstore = KeyStore.getInstance("JCEKS");
+                                        kstore.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
+                                        Key myPrivateKey = kstore.getKey("keyrsa", pass_keystore.toCharArray());
 
-                              KeyStore kstore = KeyStore.getInstance("JCEKS");
-                              kstore.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
-                              Key myPrivateKey = kstore.getKey("keyrsa", pass_keystore.toCharArray());
+                                        Cipher cipher = Cipher.getInstance("RSA");
 
-                              // 5. Decrypt section key with OWN private key
-                              Cipher cipher = Cipher.getInstance("RSA");
-                              cipher.init(Cipher.DECRYPT_MODE, myPrivateKey); // your loaded private key
-                              byte[] sectionKeyBytes = cipher.doFinal(encryptedSectionKey);
+                                        // Unwrap section key with own private key
+                                        cipher.init(Cipher.UNWRAP_MODE, myPrivateKey);
+                                        Key sectionKey = cipher.unwrap(encryptedSectionKey, "AES", Cipher.SECRET_KEY);
 
-                              // 6. Re-encrypt with the userToAdd's public key
-                              cipher.init(Cipher.ENCRYPT_MODE, userPublicKey);
-                              byte[] reEncryptedKey = cipher.doFinal(sectionKeyBytes);
-                              
-                              // 7. Send re-encrypted key to server
-                              outStream.writeObject(reEncryptedKey);
-                              outStream.flush();
-                            } catch (Exception e) {
-                              System.err.println("Error during key handling: " + e.getMessage());
-                              break;
-                            }
-                            // 8. Read final result
-                            String server_Response = (String) inStream.readObject();
-                            switch (server_Response) {
-                                case "USER_ADDED"    -> System.out.println("OK");
-                                case "USER_NOT_FOUND"-> System.out.println("NOUSER");
-                                case "HOME_NOT_FOUND"-> System.out.println("NOHM");
-                                case "NO_USER_PERMS" -> System.out.println("NOPERM");
-                                default              -> System.out.println("NOK");
+                                        // Re-wrap section key with userToAdd's public key
+                                        cipher.init(Cipher.WRAP_MODE, userPublicKey);
+                                        byte[] reEncryptedSectionKey = cipher.wrap(sectionKey);
+                                        outStream.writeObject(reEncryptedSectionKey);
+
+                                        // Unwrap home key with own private key
+                                        cipher.init(Cipher.UNWRAP_MODE, myPrivateKey);
+                                        Key homeKey = cipher.unwrap(encryptedHomeKey, "AES", Cipher.SECRET_KEY);
+
+                                        // Re-wrap home key with userToAdd's public key
+                                        cipher.init(Cipher.WRAP_MODE, userPublicKey);
+                                        byte[] reEncryptedHomeKey = cipher.wrap(homeKey);
+                                        outStream.writeObject(reEncryptedHomeKey);
+
+                                        outStream.flush();
+
+                                        String server_Response = (String) inStream.readObject();
+                                        if (server_Response.equals("USER_ADDED")) {
+                                            System.out.println("OK");
+                                        } else {
+                                            System.out.println("NOK");
+                                        }
+
+                                    } catch (Exception e) {
+                                        System.err.println("Error during key handling: " + e.getMessage());
+                                    }
+                                }
+                                default ->
+                                    System.out.println("NOK");
                             }
                         }
                         case "RD" -> {
@@ -476,10 +516,12 @@ public class SpertaClient {
 
                                         decipher(keyFile, logFile, "devicesLog_" + command_Args[1] + ".txt");
 
+                                        File decryptedLog = new File("devicesLog_" + command_Args[1] + ".txt");
                                         String[] user_devices = Arrays.copyOfRange(server_Response, 5, server_Response.length);
-                                        handle_file(logFile, user_devices);
+                                        handle_file(decryptedLog, user_devices);
                                         keyFile.delete();
                                         logFile.delete();
+                                        decryptedLog.delete();
                                         System.out.println("OK, " + server_Response[4] + " (long).");
                                     } catch (IOException | ClassNotFoundException e) {
                                         System.err.println(e.getMessage());
@@ -526,7 +568,7 @@ public class SpertaClient {
                                                 System.err.println("INTEGRITY VIOLATION: historical file has been tampered with!");
                                                 System.exit(-1);
                                             }
-                                            
+
                                             String fileName = command_Args[1] + "_" + command_Args[2] + ".csv";
                                             try (FileWriter fw = new FileWriter(fileName)) {
                                                 Cipher c = Cipher.getInstance("AES");
@@ -609,11 +651,22 @@ public class SpertaClient {
     }
 
     private void handle_file(File file, String[] string) {
-        File finaFile = new File(file.getName());
+        File finaFile = new File("output_" + file.getName());
         try (FileWriter fW = new FileWriter(finaFile); Scanner sc = new Scanner(file)) {
             while (sc.hasNextLine()) {
-                String[] line = sc.next().split(":");
-                if (Arrays.asList(string).contains(line[0])) {
+                String raw = sc.nextLine().trim();
+                if (raw.isEmpty()) {
+                    continue;
+                }
+                String[] line = raw.split(":");
+                boolean allowed = false;
+                for (String section : string) {
+                    if (line[0].startsWith(section)) {
+                        allowed = true;
+                        break;
+                    }
+                }
+                if (allowed) {
                     fW.write(String.join(":", line) + "\n");
                 }
             }
