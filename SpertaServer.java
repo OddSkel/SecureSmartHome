@@ -31,6 +31,7 @@ import java.util.Map.Entry;
 import java.util.Scanner;
 import java.util.concurrent.Semaphore;
 import java.util.stream.Stream;
+
 import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
 import javax.crypto.CipherOutputStream;
@@ -312,11 +313,11 @@ class ServerThread extends Thread {
                             case "CREATE" -> {
                                 String houseName = client_Commands[1];
                                 System.out.println("[" + user + " Thread] CREATE command received for home: " + houseName);
-								File decCheck = new File("ho_dec_check_" + user + ".txt");
-								if (homes.length() != 0) decipher(serverKey, homes, decCheck.getName());
-								else decCheck.createNewFile();
-								boolean exists = homeExists(houseName, decCheck);
-								decCheck.delete();
+                                File decCheck = new File("ho_dec_check_" + user + ".txt");
+                                if (homes.length() != 0) decipher(serverKey, homes, decCheck.getName());
+                                else decCheck.createNewFile();
+                                boolean exists = homeExists(houseName, decCheck);
+                                decCheck.delete();
                                 createHome(houseName);
 								if (!exists) {
 									try {
