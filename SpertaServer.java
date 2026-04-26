@@ -244,6 +244,7 @@ class ServerThread extends Thread {
     private byte[] usersMac, homesMac, devicesLogMac;
 
     private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
+    private static final String[] SECTIONS = {"E", "G", "L", "M", "P", "S"};
 
     ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal, ObjectOutputStream out, ObjectInputStream in,
             String pwdCifra, Key serverKey, Key macKey) {
@@ -319,27 +320,26 @@ class ServerThread extends Thread {
                                 boolean exists = homeExists(houseName, decCheck);
                                 decCheck.delete();
                                 createHome(houseName);
-								if (!exists) {
-									try {
-										byte[] wrappedHomeKey = (byte[]) in.readObject();
-										File homeKeyFile = new File("homes/" + houseName, "key." + houseName + "." + user);
-										Files.write(homeKeyFile.toPath(), wrappedHomeKey);
-	
-										String[] sections = {"E", "G", "L", "M", "P", "S"};
-										for (String section : sections) {
-											byte[] wrappedSectionKey = (byte[]) in.readObject();
-											File secKeyFile = new File("homes/" + houseName + "/" + section,
-													"key." + houseName + "." + section + "." + user);
-											Files.write(secKeyFile.toPath(), wrappedSectionKey);
-										}
-	
-										usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
-										homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
-									} catch (IOException | ClassNotFoundException e) {
-										System.err.println("Erro ao gerar chaves no CREATE: " + e.getMessage());
-										System.exit(-1);
-									}
-								}
+                                if (!exists) {
+                                  try {
+                                    byte[] wrappedHomeKey = (byte[]) in.readObject();
+                                    File homeKeyFile = new File("homes/" + houseName, "key." + houseName + "." + user);
+                                    Files.write(homeKeyFile.toPath(), wrappedHomeKey);
+                  
+                                    for (String section : SECTIONS) {
+                                      byte[] wrappedSectionKey = (byte[]) in.readObject();
+                                      File secKeyFile = new File("homes/" + houseName + "/" + section,
+                                          "key." + houseName + "." + section + "." + user);
+                                      Files.write(secKeyFile.toPath(), wrappedSectionKey);
+                                    }
+                  
+                                    usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
+                                    homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
+                                  } catch (IOException | ClassNotFoundException e) {
+                                    System.err.println("Erro ao gerar chaves no CREATE: " + e.getMessage());
+                                    System.exit(-1);
+                                  }
+                                }
                             }
                             case "ADD" -> {
                                 String userToAdd = client_Commands[1];
@@ -371,28 +371,67 @@ class ServerThread extends Thread {
                                     } else if (!isValidSection(section)) {
                                         out.writeObject("INVALID_SECTION");
                                     } else {
-                                        try {
-                                            byte[] encryptedKeyForOwner = getSectionKeyEncryptedFor(homeName, section, user);
-                                            out.writeObject("SECTION_KEY");
-                                            out.writeObject(encryptedKeyForOwner);
-                                            out.flush();
-                                            byte[] encryptedHomeKeyForOwner = getHomeKeyEncryptedFor(homeName, user);
-                                            out.writeObject(encryptedHomeKeyForOwner);
-                                            out.flush();
-                                            byte[] reEncryptedKey = (byte[]) in.readObject();
-                                            saveSectionKey(homeName, section, userToAdd, reEncryptedKey);
-                                            byte[] reEncryptedHomeKey = (byte[]) in.readObject();
-                                            saveHomeKey(homeName, userToAdd, reEncryptedHomeKey);
-                                            addUserToHome(userToAdd, homeName, section, decHomesFile);
-                                            usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
-                                            Files.write(Path.of(users.getName() + ".hash"), usersMac);
-                                            homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
-                                            Files.write(Path.of(homes.getName() + ".hash"), homesMac);
-                                        } catch (Exception e) {
-                                            System.err.println("Error in ADD command: " + e.getMessage());
-                                            System.exit(-1);
-                                        }
-                                        out.writeObject("USER_ADDED");
+                                      if (!section.equals("all")) {
+                                          // Single section logic
+                                          try {
+                                              byte[] encryptedKeyForOwner = getSectionKeyEncryptedFor(homeName, section, user);
+                                              out.writeObject("SECTION_KEY");
+                                              out.writeObject(encryptedKeyForOwner);
+                                              out.flush();
+                                              byte[] encryptedHomeKeyForOwner = getHomeKeyEncryptedFor(homeName, user);
+                                              out.writeObject(encryptedHomeKeyForOwner);
+                                              out.flush();
+                                              byte[] reEncryptedKey = (byte[]) in.readObject();
+                                              saveSectionKey(homeName, section, userToAdd, reEncryptedKey);
+                                              byte[] reEncryptedHomeKey = (byte[]) in.readObject();
+                                              saveHomeKey(homeName, userToAdd, reEncryptedHomeKey);
+                                              addUserToHome(userToAdd, homeName, section, decHomesFile);
+                                              usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
+                                              Files.write(Path.of(users.getName() + ".hash"), usersMac);
+                                              homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
+                                              Files.write(Path.of(homes.getName() + ".hash"), homesMac);
+                                          } catch (Exception e) {
+                                              System.err.println("Error in ADD command: " + e.getMessage());
+                                              System.exit(-1);
+                                          }
+                                          System.out.println("[" + user + " Thread] User '" + userToAdd + "' added to home '" + homeName + "' with permissions for section '" + section + "'.");
+                                          out.writeObject("USER_ADDED");
+                                          out.flush();
+                                      } else {
+                                          // All sections logic - only key exchange happens per section
+                                          for (String sec : SECTIONS) {
+                                              try {
+                                                  byte[] encryptedKeyForOwner = getSectionKeyEncryptedFor(homeName, sec, user);
+                                                  out.writeObject("SECTION_KEY");
+                                                  out.writeObject(encryptedKeyForOwner);
+                                                  out.flush();
+                                                  byte[] encryptedHomeKeyForOwner = getHomeKeyEncryptedFor(homeName, user);
+                                                  out.writeObject(encryptedHomeKeyForOwner);
+                                                  out.flush();
+                                                  byte[] reEncryptedKey = (byte[]) in.readObject();
+                                                  saveSectionKey(homeName, sec, userToAdd, reEncryptedKey);
+                                                  byte[] reEncryptedHomeKey = (byte[]) in.readObject();
+                                                  saveHomeKey(homeName, userToAdd, reEncryptedHomeKey);
+                                              } catch (Exception e) {
+                                                  System.err.println("Error in ADD command: " + e.getMessage());
+                                                  System.exit(-1);
+                                              }
+                                          }
+                                          // Run once after all sections are processed
+                                          try {
+                                              addUserToHome(userToAdd, homeName, section, decHomesFile);
+                                              usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
+                                              Files.write(Path.of(users.getName() + ".hash"), usersMac);
+                                              homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
+                                              Files.write(Path.of(homes.getName() + ".hash"), homesMac);
+                                          } catch (Exception e) {
+                                              System.err.println("Error in ADD command: " + e.getMessage());
+                                              System.exit(-1);
+                                          }
+                                          System.out.println("[" + user + " Thread] User '" + userToAdd + "' added to home '" + homeName + "' with permissions for all sections.");
+                                          out.writeObject("USER_ADDED");
+                                          out.flush();
+                                      }
                                     }
                                 } finally {
                                     decUsersFile.delete();
@@ -1023,6 +1062,12 @@ class ServerThread extends Thread {
                         userFound = true;
                         if (perms.equals("all") || hasPerm(perms, section)) {
                             userEntry = userName + ":" + section;
+                            for(String sec : SECTIONS){
+                              if (!sec.equals(section)){
+                                Path path = Paths.get("homes/" + homeName + "/" + sec + "/key." + homeName + "." + sec + "." + userToAdd);
+                                Files.deleteIfExists(path);
+                              }
+                            }
                         } else if (section.equals("all")) {
                             userEntry = userName + ":all";
                         } else {

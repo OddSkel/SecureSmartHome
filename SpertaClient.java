@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Scanner;
+
 import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
 import javax.crypto.CipherOutputStream;
@@ -64,6 +65,7 @@ public class SpertaClient {
   """;
 
     private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
+    private static final String[] SECTIONS = {"E", "G", "L", "M", "P", "S"};
     private SecretKey macKey;
 
     public static void main(String[] args) {
@@ -250,42 +252,50 @@ public class SpertaClient {
                                     System.out.println("NOK # invalid section");
                                 case "SECTION_KEY" -> {
                                     try {
-                                        byte[] encryptedSectionKey = (byte[]) inStream.readObject();
-                                        byte[] encryptedHomeKey = (byte[]) inStream.readObject();
-
                                         KeyStore kstore = KeyStore.getInstance("JCEKS");
                                         kstore.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
                                         Key myPrivateKey = kstore.getKey("keyrsa", pass_keystore.toCharArray());
-
                                         Cipher cipher = Cipher.getInstance("RSA");
 
-                                        // Unwrap section key with own private key
-                                        cipher.init(Cipher.UNWRAP_MODE, myPrivateKey);
-                                        Key sectionKey = cipher.unwrap(encryptedSectionKey, "AES", Cipher.SECRET_KEY);
+                                        // Handle first section (already received "SECTION_KEY" signal)
+                                        // Then loop for remaining sections
+                                        String[] sectionsToProcess = command_Args[3].equals("all") ? SECTIONS : new String[]{command_Args[3]};
+                                        
+                                        for (int i = 0; i < sectionsToProcess.length; i++) {
+                                            // First iteration already consumed "SECTION_KEY", read it for subsequent ones
+                                            if (i > 0) {
+                                                Object signal = inStream.readObject();
+                                            }
 
-                                        // Re-wrap section key with userToAdd's public key
-                                        cipher.init(Cipher.WRAP_MODE, userPublicKey);
-                                        byte[] reEncryptedSectionKey = cipher.wrap(sectionKey);
-                                        outStream.writeObject(reEncryptedSectionKey);
+                                            byte[] encryptedSectionKey = (byte[]) inStream.readObject();
+                                            byte[] encryptedHomeKey = (byte[]) inStream.readObject();
 
-                                        // Unwrap home key with own private key
-                                        cipher.init(Cipher.UNWRAP_MODE, myPrivateKey);
-                                        Key homeKey = cipher.unwrap(encryptedHomeKey, "AES", Cipher.SECRET_KEY);
+                                            // Unwrap section key with own private key
+                                            cipher.init(Cipher.UNWRAP_MODE, myPrivateKey);
+                                            Key sectionKey = cipher.unwrap(encryptedSectionKey, "AES", Cipher.SECRET_KEY);
 
-                                        // Re-wrap home key with userToAdd's public key
-                                        cipher.init(Cipher.WRAP_MODE, userPublicKey);
-                                        byte[] reEncryptedHomeKey = cipher.wrap(homeKey);
-                                        outStream.writeObject(reEncryptedHomeKey);
+                                            // Re-wrap section key with userToAdd's public key
+                                            cipher.init(Cipher.WRAP_MODE, userPublicKey);
+                                            byte[] reEncryptedSectionKey = cipher.wrap(sectionKey);
+                                            outStream.writeObject(reEncryptedSectionKey);
 
-                                        outStream.flush();
+                                            // Unwrap home key with own private key
+                                            cipher.init(Cipher.UNWRAP_MODE, myPrivateKey);
+                                            Key homeKey = cipher.unwrap(encryptedHomeKey, "AES", Cipher.SECRET_KEY);
 
+                                            // Re-wrap home key with userToAdd's public key
+                                            cipher.init(Cipher.WRAP_MODE, userPublicKey);
+                                            byte[] reEncryptedHomeKey = cipher.wrap(homeKey);
+                                            outStream.writeObject(reEncryptedHomeKey);
+
+                                            outStream.flush();
+                                        }
+
+                                        // Read final USER_ADDED after all sections processed
                                         String server_Response = (String) inStream.readObject();
                                         if (server_Response.equals("USER_ADDED")) {
                                             System.out.println("OK");
-                                        } else {
-                                            System.out.println("NOK");
                                         }
-
                                     } catch (Exception e) {
                                         System.err.println("Error during key handling: " + e.getMessage());
                                     }
