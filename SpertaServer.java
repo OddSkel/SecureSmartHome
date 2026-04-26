@@ -21,7 +21,9 @@ import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.SecureRandom;
 import java.security.UnrecoverableKeyException;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -823,6 +825,28 @@ class ServerThread extends Thread {
                 System.err.println(e.getMessage());
                 System.exit(-1);
             }
+
+            try {
+                // Agora cria a truststore do novo utilizador
+                KeyStore ts = KeyStore.getInstance("JKS");
+                ts.load(null, pass_truststore.toCharArray()); // truststore nova/vazia
+
+                // Carrega o cert que acabou de chegar
+                CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                Certificate cert = cf.generateCertificate(new FileInputStream("Certs/" + user + ".cer"));
+
+                // Insere o próprio certificado do utilizador na sua truststore
+                ts.setCertificateEntry(user, cert);
+
+                // Persiste em Certs/<username>.truststore
+                try (FileOutputStream fos = new FileOutputStream("Certs/" + user + ".truststore")) {
+                    ts.store(fos, pass_truststore.toCharArray());
+                }
+            } catch (Exception e) {
+                System.err.println("Error creating truststore for new user: " + e.getMessage());
+                System.exit(-1);
+            }
+
             out.writeObject("OK_NEW_USER");
             out.flush();
         } catch (IOException e) {
