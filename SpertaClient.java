@@ -2,6 +2,7 @@
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -11,21 +12,26 @@ import java.io.ObjectOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.security.InvalidKeyException;
 import java.security.Key;
 import java.security.KeyException;
 import java.security.KeyStore;
+import java.security.KeyStoreException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Scanner;
+import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
 import javax.crypto.CipherOutputStream;
+import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.KeyGenerator;
 import javax.crypto.Mac;
 import javax.crypto.NoSuchPaddingException;
@@ -97,8 +103,7 @@ public class SpertaClient {
         System.setProperty("javax.net.ssl.trustStore", "Certs/truststore.client");
         System.setProperty("javax.net.ssl.trustStorePassword", "Truststore");
         SocketFactory sf = SSLSocketFactory.getDefault();
-        try (SSLSocket cliSoc = (SSLSocket) sf.createSocket(host, port); //Socket cliSoc = new Socket(host, port);
-                 ObjectOutputStream outStream = new ObjectOutputStream(cliSoc.getOutputStream()); ObjectInputStream inStream = new ObjectInputStream(cliSoc.getInputStream()); Scanner user_input = new Scanner(System.in)) {
+        try (SSLSocket cliSoc = (SSLSocket) sf.createSocket(host, port); ObjectOutputStream outStream = new ObjectOutputStream(cliSoc.getOutputStream()); ObjectInputStream inStream = new ObjectInputStream(cliSoc.getInputStream()); Scanner user_input = new Scanner(System.in)) {
 
             try {
                 byte[] nounce_rec = (byte[]) inStream.readObject();
@@ -112,15 +117,13 @@ public class SpertaClient {
 
                 outStream.writeObject(hashBytes);
                 outStream.flush();
-            } catch (Exception e) {
+            } catch (IOException | ClassNotFoundException | NoSuchAlgorithmException e) {
                 System.err.println("SHA-256 algorithm not found: " + e.getMessage());
                 System.exit(-1);
             }
 
             String integrity_check = (String) inStream.readObject();
             if (integrity_check.equals("OK-ATTEST")) {
-                outStream.writeObject(truststore);
-                outStream.writeObject(pass_truststore);
                 outStream.writeObject(keystore);
                 outStream.writeObject(pass_keystore);
                 outStream.writeObject(user);
@@ -132,18 +135,15 @@ public class SpertaClient {
                 while (true) {
                     System.out.print(COMMAND_LIST + "\n" + "Insert Command: ");
 
-                    //Garante que lemos a linha toda (comando + argumentos)
                     String user_Command = "";
                     if (user_input.hasNextLine()) {
                         user_Command = user_input.nextLine();
                     }
-                    //nao tirar isto
-                    //Limpeza técnica: se a linha vier vazia (comum após ler números anteriormente), tenta ler a próxima
+
                     if (user_Command.isEmpty() && user_input.hasNextLine()) {
                         user_Command = user_input.nextLine();
                     }
 
-                    //Divide a string por espaços para obter os argumentos
                     String[] command_Args = user_Command.split(" ");
 
                     switch (command_Args[0]) {
@@ -156,7 +156,6 @@ public class SpertaClient {
                                 String server_Response = (String) inStream.readObject();
                                 if ("HOME_CREATED".equals(server_Response)) {
                                     try {
-                                        // Load owner's public key from keystore
                                         KeyStore ks = KeyStore.getInstance("JCEKS");
                                         ks.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
                                         PublicKey pk = ks.getCertificate("keyrsa").getPublicKey();
@@ -166,7 +165,6 @@ public class SpertaClient {
                                         KeyGenerator kg = KeyGenerator.getInstance("AES");
                                         kg.init(128);
 
-                                        // Generate and send home key
                                         SecretKey homeKey = kg.generateKey();
                                         outStream.writeObject(cRSA.wrap(homeKey));
 
@@ -178,7 +176,7 @@ public class SpertaClient {
                                         }
                                         outStream.flush();
                                         System.out.println("OK");
-                                    } catch (Exception e) {
+                                    } catch (IOException | InvalidKeyException | KeyStoreException | NoSuchAlgorithmException | CertificateException | IllegalBlockSizeException | NoSuchPaddingException e) {
                                         System.err.println("Error generating keys in CREATE: " + e.getMessage());
                                         System.exit(-1);
                                     }
@@ -198,10 +196,7 @@ public class SpertaClient {
                             }
 
                             String userToAdd = command_Args[1];
-                            String homeName = command_Args[2];
-                            String section = command_Args[3];
 
-                            // 1. Check if we have the user's certificate locally
                             PublicKey userPublicKey = null;
                             File certFile = new File("Certs/" + userToAdd + ".cer");
 
@@ -211,12 +206,11 @@ public class SpertaClient {
                                     FileInputStream certInput = new FileInputStream(certFile);
                                     Certificate cert = cf.generateCertificate(certInput);
                                     userPublicKey = cert.getPublicKey();
-                                } catch (Exception e) {
+                                } catch (FileNotFoundException | CertificateException e) {
                                     System.err.println("Error loading local certificate: " + e.getMessage());
                                     break;
                                 }
                             } else {
-                                // 2. Request certificate from server
                                 outStream.writeObject(new String[]{"GET_CERT", userToAdd});
                                 outStream.flush();
 
@@ -233,17 +227,15 @@ public class SpertaClient {
                                     userPublicKey = cert.getPublicKey();
                                     Files.createDirectories(Paths.get("Certs"));
                                     Files.write(certFile.toPath(), certBytes);
-                                } catch (Exception e) {
+                                } catch (IOException | ClassNotFoundException | CertificateException e) {
                                     System.err.println("Error handling certificate: " + e.getMessage());
                                     break;
                                 }
                             }
 
-                            // 3. Send the ADD command to server
                             outStream.writeObject(command_Args);
                             outStream.flush();
 
-                            // 4. Read server response - could be error or SECTION_KEY
                             String keyResponse = (String) inStream.readObject();
                             switch (keyResponse) {
                                 case "USER_NOT_FOUND" ->
@@ -317,7 +309,6 @@ public class SpertaClient {
                             switch (server_Response[0]) {
                                 case "OK" -> {
                                     File f = new File("key." + command_Args[1] + "." + command_Args[2] + "." + user);
-                                    // 1. Receber a chave como Objeto
                                     byte[] keyBytes = (byte[]) inStream.readObject();
                                     try (FileOutputStream key = new FileOutputStream(f)) {
                                         key.write(keyBytes);
@@ -386,7 +377,6 @@ public class SpertaClient {
                                 Object response = inStream.readObject();
 
                                 if ("OK_EC".equals(response)) {
-                                    // 1. Receber e extrair a Chave da Secção
                                     byte[] sectionKeyBytes = (byte[]) inStream.readObject();
                                     File tempSecKey = new File("temp_ec_sec.key");
                                     try (FileOutputStream fos = new FileOutputStream(tempSecKey)) {
@@ -394,8 +384,6 @@ public class SpertaClient {
                                     }
                                     Key sectionKey = getKey(tempSecKey);
                                     tempSecKey.delete();
-
-                                    // 2. Receber e extrair a Chave da Casa
                                     byte[] homeKeyBytes = (byte[]) inStream.readObject();
                                     File tempHomeKey = new File("temp_ec_home.key");
                                     try (FileOutputStream fos = new FileOutputStream(tempHomeKey)) {
@@ -404,20 +392,16 @@ public class SpertaClient {
                                     Key homeKey = getKey(tempHomeKey);
                                     tempHomeKey.delete();
 
-                                    // 3. Receber o devicesLog cifrado e o seu MAC
                                     byte[] encryptedLog = (byte[]) inStream.readObject();
                                     byte[] receivedLogMac = (byte[]) inStream.readObject();
 
                                     if (sectionKey != null && homeKey != null) {
-                                        // Derive MAC keys from section and home keys
                                         SecretKey sectionMacKey = deriveMacKey(sectionKey);
                                         SecretKey homeMacKey = deriveMacKey(homeKey);
 
-                                        // --- A) Processar o devicesLog ---
                                         Map<String, String> deviceStates = new LinkedHashMap<>();
 
                                         if (encryptedLog.length > 0) {
-                                            // Verify devicesLog MAC before processing
                                             if (receivedLogMac.length > 0 && !verifyMac(homeMacKey, encryptedLog, receivedLogMac)) {
                                                 System.err.println("INTEGRITY VIOLATION: devicesLog has been tampered with!");
                                                 System.exit(-1);
@@ -440,45 +424,38 @@ public class SpertaClient {
                                             }
                                         }
 
-                                        // Update device state
                                         deviceStates.put(command_Args[2], command_Args[3]);
 
-                                        // Rebuild log content
                                         StringBuilder newLogContent = new StringBuilder();
                                         for (Map.Entry<String, String> entry : deviceStates.entrySet()) {
                                             newLogContent.append(entry.getKey()).append(":").append(entry.getValue()).append(System.lineSeparator());
                                         }
 
-                                        // Encrypt new devicesLog and generate its MAC
                                         Cipher cipherEncHome = Cipher.getInstance("AES");
                                         cipherEncHome.init(Cipher.ENCRYPT_MODE, homeKey);
                                         byte[] newEncryptedLog = cipherEncHome.doFinal(newLogContent.toString().getBytes());
                                         byte[] newLogMac = generateMac(homeMacKey, newEncryptedLog);
 
-                                        // --- B) Processar o valor do dispositivo para a Secção ---
                                         Cipher cipherEncSec = Cipher.getInstance("AES");
                                         cipherEncSec.init(Cipher.ENCRYPT_MODE, sectionKey);
                                         byte[] valueBytes = ByteBuffer.allocate(4).putInt(value).array();
                                         byte[] encryptedValue = cipherEncSec.doFinal(valueBytes);
                                         byte[] sectionMac = generateMac(sectionMacKey, encryptedValue);
 
-                                        // 4. Enviar tudo de volta ao servidor
-                                        outStream.writeObject(encryptedValue);  // valor cifrado
-                                        outStream.writeObject(sectionMac);      // MAC do valor
-                                        outStream.writeObject(newEncryptedLog); // devicesLog cifrado
-                                        outStream.writeObject(newLogMac);       // MAC do devicesLog
+                                        outStream.writeObject(encryptedValue);
+                                        outStream.writeObject(sectionMac);
+                                        outStream.writeObject(newEncryptedLog);
+                                        outStream.writeObject(newLogMac);
                                         outStream.flush();
 
-                                        // Confirmação do servidor
                                         System.out.println((String) inStream.readObject());
                                     } else {
                                         System.out.println("Erro ao obter as chaves.");
                                     }
                                 } else {
-                                    // Imprimir respostas de Erro (NOPERM, NOHM, NOKEY, NOD)
                                     System.out.println(response);
                                 }
-                            } catch (Exception e) {
+                            } catch (IOException | ClassNotFoundException | InvalidKeyException | NoSuchAlgorithmException | BadPaddingException | IllegalBlockSizeException | NoSuchPaddingException e) {
                                 System.err.println("Erro no comando EC: " + e.getMessage());
                             }
                         }
@@ -594,13 +571,12 @@ public class SpertaClient {
 
                                                 if (!firstBlockFound) {
                                                     System.err.println("Erro: Não foi possível decifrar a linha inicial do ficheiro.");
-                                                    return; // Sai se o ficheiro estiver totalmente corrompido logo no início
+                                                    return;
                                                 }
                                                 while (index + 16 <= encryptedFileContent.length) {
                                                     byte[] cipherChunk = Arrays.copyOfRange(encryptedFileContent, index, index + 16);
                                                     byte[] decryptedValue = c.doFinal(cipherChunk);
 
-                                                    // Converte de volta para Inteiro
                                                     int val = ByteBuffer.wrap(decryptedValue).getInt();
                                                     fw.write(val + "\n");
 
@@ -615,7 +591,6 @@ public class SpertaClient {
                                         System.err.println("Erro ao processar ficheiros: " + e.getMessage());
                                     }
                                 } else {
-                                    // Tratamento das mensagens de erro (NOHM, NOD, NOPERM, etc.)
                                     switch (response) {
                                         case "NOHM" ->
                                             System.out.println("NOHM # esta casa não existe");
@@ -712,22 +687,11 @@ public class SpertaClient {
             }
 
             outStream.writeObject(filename);
-            //outStream.writeLong(tempFile.length());
-            //outStream.flush();
             byte[] encBytes = Files.readAllBytes(tempFile.toPath());
             outStream.writeObject(encBytes);
             byte[] newMac = generateMac(macKey, encBytes);
             outStream.writeObject(newMac);
             outStream.flush();
-
-            //try (FileInputStream encStream = new FileInputStream(tempFile)) {
-            //int bytesToRead;
-            //byte[] buf = new byte[1024];
-            //while ((bytesToRead = encStream.read(buf, 0, buf.length)) != -1) {
-            //outStream.write(buf, 0, bytesToRead);
-            //outStream.flush();
-            //}
-            //}
             tempFile.delete();
             f.delete();
         } catch (IOException | KeyException | NoSuchAlgorithmException | NoSuchPaddingException e) {
@@ -743,20 +707,16 @@ public class SpertaClient {
                 throw new KeyException("Key not found!");
             }
 
-            // Read the encrypted bytes directly from the log file
             byte[] encryptedBytes = Files.readAllBytes(log.toPath());
 
-            // ✅ Use doFinal() to match how EC encrypted it (not CipherInputStream)
             Cipher c = Cipher.getInstance("AES");
             c.init(Cipher.DECRYPT_MODE, aesKey);
             byte[] decryptedBytes = c.doFinal(encryptedBytes);
-
-            // ✅ Write decrypted content back to the same log file so handle_file can read it
             try (FileOutputStream fos = new FileOutputStream(name)) {
                 fos.write(decryptedBytes);
             }
 
-        } catch (Exception e) {
+        } catch (IOException | KeyException | NoSuchAlgorithmException | BadPaddingException | IllegalBlockSizeException | NoSuchPaddingException e) {
             System.err.println(e.getMessage());
             System.exit(-1);
         }
@@ -818,7 +778,7 @@ public class SpertaClient {
                             Certificate cert = ks.getCertificate("keyrsa");
                             out.writeObject(cert != null ? cert.getEncoded() : new byte[0]);
                             out.flush();
-                        } catch (Exception e) {
+                        } catch (IOException | KeyStoreException | NoSuchAlgorithmException | CertificateException e) {
                             System.err.println(e.getMessage());
                             System.exit(-1);
                         }
@@ -838,7 +798,7 @@ public class SpertaClient {
             mac.init(key);
             mac.update(b);
             return mac.doFinal();
-        } catch (Exception e) {
+        } catch (IllegalStateException | InvalidKeyException | NoSuchAlgorithmException e) {
             System.err.println(e.getMessage());
             System.exit(-1);
         }

@@ -10,26 +10,33 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.InvalidKeyException;
 import java.security.Key;
 import java.security.KeyException;
+import java.security.KeyManagementException;
 import java.security.KeyStore;
+import java.security.KeyStoreException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.SecureRandom;
+import java.security.UnrecoverableKeyException;
+import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Scanner;
 import java.util.concurrent.Semaphore;
 import java.util.stream.Stream;
+import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
 import javax.crypto.CipherOutputStream;
+import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.Mac;
+import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
@@ -45,9 +52,7 @@ public class SpertaServer {
     private static final int MAX_CLIENTS = 3;
     private static final Semaphore signal = new Semaphore(MAX_CLIENTS);
     private static final Semaphore command_signal = new Semaphore(1);
-    private String serverPwdCifra;
     private static final String SALT_FILE = "server.salt";
-    private static final int AES_KEY_SIZE = 128;
     private static final int ITERATIONS = 310_000;
     private Key[] serverKeys;
     private Key serverKey;
@@ -57,15 +62,14 @@ public class SpertaServer {
         System.out.println("[SERVER] Starting server...");
         SpertaServer server = new SpertaServer();
 
-        // Agora aceita os 4 argumentos: porta, pwd-cifra, keystore, pwd-keystore
-        if (args.length == 4) {
-            server.startServer(Integer.parseInt(args[0]), args[1], args[2], args[3]);
-        } else if (args.length == 0) {
-            // Caso não passes nada, usa valores por omissão (ajusta se necessário)
-            server.startServer(22345, "default_pwd", "Keys/keystore.server", "123456");
-        } else {
-            System.out.println("Usage: java SpertaServer <port> <password-cifra> <keystore> <password-keystore>");
-            System.exit(-1);
+        switch (args.length) {
+            case 4 -> server.startServer(Integer.parseInt(args[0]), args[1], args[2], args[3]);
+            case 0 ->
+                server.startServer(22345, "default_pwd", "Keys/keystore.server", "123456");
+            default -> {
+                System.out.println("Usage: java SpertaServer <port> <password-cifra> <keystore> <password-keystore>");
+                System.exit(-1);
+            }
         }
     }
 
@@ -109,7 +113,7 @@ public class SpertaServer {
             SSLServerSocketFactory ssf = sc.getServerSocketFactory();
             sSoc = (SSLServerSocket) ssf.createServerSocket(port);
             this.serverSocket = sSoc;
-        } catch (Exception e) {
+        } catch (IOException | KeyManagementException | KeyStoreException | NoSuchAlgorithmException | UnrecoverableKeyException | CertificateException e) {
             System.err.println("Error setting up SSL: " + e.getMessage());
             System.exit(-1);
         }
@@ -137,7 +141,7 @@ public class SpertaServer {
                         MessageDigest md = MessageDigest.getInstance("SHA-256");
                         hashBytes = md.digest(combined);
 
-                    } catch (Exception e) {
+                    } catch (IOException | NoSuchAlgorithmException e) {
                         System.err.println("[SERVER] SHA-256 algorithm not found: " + e.getMessage());
                         System.exit(-1);
                     }
@@ -154,7 +158,7 @@ public class SpertaServer {
 
                     signal.acquire();
                     ServerThread newServerThread = new ServerThread(inSoc, signal, command_signal, check,
-                            rec, pwdCifra, keystorePwd, serverKey, macKey);
+                            rec, keystorePwd, serverKey, macKey);
                     newServerThread.start();
                 } catch (IOException e) {
                     System.err.println(e.getMessage());
@@ -175,7 +179,6 @@ public class SpertaServer {
     private static Key[] generateOrLoadKeys(String password) throws Exception {
         byte[] salt = loadOrCreateSalt();
 
-        // Encryption key
         PBEKeySpec encSpec = new PBEKeySpec(password.toCharArray(), salt, ITERATIONS);
         SecretKeyFactory factory = SecretKeyFactory.getInstance("PBEWithHmacSHA256AndAES_128");
         SecretKey pbeKey = factory.generateSecret(encSpec);
@@ -183,11 +186,10 @@ public class SpertaServer {
         byte[] encKeyBytes = Arrays.copyOf(pbeKey.getEncoded(), 16);
         Key encKey = new SecretKeySpec(encKeyBytes, "AES");
 
-        // MAC key — same password, same salt, but hashed differently
         PBEKeySpec macSpec = new PBEKeySpec(password.toCharArray(), salt, ITERATIONS);
         SecretKey pbeMacKey = factory.generateSecret(macSpec);
         macSpec.clearPassword();
-        byte[] macKeyBytes = Arrays.copyOfRange(pbeMacKey.getEncoded(), 0, 32); // 256 bits for HmacSHA256
+        byte[] macKeyBytes = Arrays.copyOfRange(pbeMacKey.getEncoded(), 0, 32);
         SecretKey macKey = new SecretKeySpec(macKeyBytes, "HmacSHA256");
 
         return new Key[]{encKey, macKey};
@@ -197,10 +199,8 @@ public class SpertaServer {
         File saltFile = new File(SALT_FILE);
 
         if (saltFile.exists()) {
-            // Load existing salt so the key stays the same
             return Files.readAllBytes(saltFile.toPath());
         } else {
-            // First run: generate and save a new salt
             byte[] salt = new byte[16];
             new SecureRandom().nextBytes(salt);
             Files.write(saltFile.toPath(), salt);
@@ -214,7 +214,7 @@ public class SpertaServer {
             mac.init(key);
             mac.update(b);
             return mac.doFinal();
-        } catch (Exception e) {
+        } catch (IllegalStateException | InvalidKeyException | NoSuchAlgorithmException e) {
             System.err.println(e.getMessage());
             System.exit(-1);
         }
@@ -237,7 +237,7 @@ class ServerThread extends Thread {
     SecretKey macKey;
 
     private File users, homes, homesFolder;
-    private String user, pwd, trustore, pass_truststore, keystore, pass_keystore, keyStorePwd, serverPwdCifra;
+    private String user, pwd, trustore, pass_truststore, keystore, pass_keystore;
     private final ObjectInputStream in;
     private final ObjectOutputStream out;
     private byte[] usersMac, homesMac, devicesLogMac;
@@ -245,14 +245,12 @@ class ServerThread extends Thread {
     private static final String[] PERMS = {"all", "E", "G", "L", "M", "P", "S"};
 
     ServerThread(Socket inSoc, Semaphore signal, Semaphore command_signal, ObjectOutputStream out, ObjectInputStream in,
-            String pwdCifra, String keyStorePwd, Key serverKey, Key macKey) {
+            String pwdCifra, Key serverKey, Key macKey) {
         socket = inSoc;
         this.signal = signal;
         command = command_signal;
         this.out = out;
         this.in = in;
-        serverPwdCifra = pwdCifra;
-        this.keyStorePwd = keyStorePwd;
         this.serverKey = serverKey;
         this.macKey = (SecretKey) macKey;
         System.out.println("thread do server para cada cliente");
@@ -285,14 +283,11 @@ class ServerThread extends Thread {
             File homesMacFile = new File(homes.getName() + ".hash");
 
             try {
-                //Maybe delete some things that client sends to user
-                trustore = (String) in.readObject();
-                pass_truststore = (String) in.readObject();
                 keystore = (String) in.readObject();
                 pass_keystore = (String) in.readObject();
                 user = (String) in.readObject();
                 pwd = (String) in.readObject();
-                String[] client_args = {trustore, pass_truststore, keystore, pass_keystore, user, pwd};
+                String[] client_args = {keystore, pass_keystore, user, pwd};
                 System.out.println("[" + user + " Thread] Authentication request received for user: " + user);
                 authenticate(client_args, serverKey);
                 while (true) {
@@ -325,12 +320,10 @@ class ServerThread extends Thread {
                                 createHome(houseName);
 								if (!exists) {
 									try {
-										// Receive and store home key from client
 										byte[] wrappedHomeKey = (byte[]) in.readObject();
 										File homeKeyFile = new File("homes/" + houseName, "key." + houseName + "." + user);
 										Files.write(homeKeyFile.toPath(), wrappedHomeKey);
 	
-										// Receive and store one section key per section from client
 										String[] sections = {"E", "G", "L", "M", "P", "S"};
 										for (String section : sections) {
 											byte[] wrappedSectionKey = (byte[]) in.readObject();
@@ -341,7 +334,7 @@ class ServerThread extends Thread {
 	
 										usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
 										homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
-									} catch (Exception e) {
+									} catch (IOException | ClassNotFoundException e) {
 										System.err.println("Erro ao gerar chaves no CREATE: " + e.getMessage());
 										System.exit(-1);
 									}
@@ -378,7 +371,6 @@ class ServerThread extends Thread {
                                         out.writeObject("INVALID_SECTION");
                                     } else {
                                         try {
-                                            // Send the section key encrypted with the OWNER's public key
                                             byte[] encryptedKeyForOwner = getSectionKeyEncryptedFor(homeName, section, user);
                                             out.writeObject("SECTION_KEY");
                                             out.writeObject(encryptedKeyForOwner);
@@ -386,13 +378,10 @@ class ServerThread extends Thread {
                                             byte[] encryptedHomeKeyForOwner = getHomeKeyEncryptedFor(homeName, user);
                                             out.writeObject(encryptedHomeKeyForOwner);
                                             out.flush();
-                                            // Receive the re-encrypted key (encrypted for userToAdd)
                                             byte[] reEncryptedKey = (byte[]) in.readObject();
-                                            // Save as key.<hm>.<s>.<user>
                                             saveSectionKey(homeName, section, userToAdd, reEncryptedKey);
                                             byte[] reEncryptedHomeKey = (byte[]) in.readObject();
                                             saveHomeKey(homeName, userToAdd, reEncryptedHomeKey);
-                                            // Now add user to home
                                             addUserToHome(userToAdd, homeName, section, decHomesFile);
                                             usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
                                             Files.write(Path.of(users.getName() + ".hash"), usersMac);
@@ -428,7 +417,6 @@ class ServerThread extends Thread {
                                             out.writeObject(new String[]{"OK", "1", matchingFiles[0].getName()});
                                             out.writeObject(keyBytes);
 
-                                            // 2. Enviar o ficheiro do dispositivo (como Objeto)
                                             byte[] fileBytes = Files.readAllBytes(matchingFiles[0].toPath());
                                             out.writeObject(fileBytes);
                                             byte[] fileMac = generateMac(rdMacKey, fileBytes);
@@ -493,21 +481,17 @@ class ServerThread extends Thread {
                                         }
                                         out.writeObject("OK_EC");
 
-                                        // Derive MAC keys from section and home keys
                                         Key sectionKey = getKey(sectionKeyFile);
                                         Key homeKey = getKey(homeKeyFile);
                                         SecretKey sectionMacKey = deriveMacKey(sectionKey);
                                         SecretKey homeMacKey = deriveMacKey(homeKey);
 
-                                        // 1. Envia a Chave da Secção
                                         byte[] wrappedSectionKey = Files.readAllBytes(sectionKeyFile.toPath());
                                         out.writeObject(wrappedSectionKey);
 
-                                        // 2. Envia a Chave da Casa
                                         byte[] wrappedHomeKey = Files.readAllBytes(homeKeyFile.toPath());
                                         out.writeObject(wrappedHomeKey);
 
-                                        // 3. Envia o devicesLog cifrado e o seu MAC
                                         File globalLog = new File("homes/" + hm + "/devicesLog.txt");
                                         File globalLogMac = new File("homes/" + hm + "/devicesLog.txt.hash");
                                         if (globalLog.exists() && globalLog.length() > 0) {
@@ -520,16 +504,14 @@ class ServerThread extends Thread {
                                                 out.writeObject(new byte[0]);
                                             }
                                         } else {
-                                            out.writeObject(new byte[0]); // empty log
-                                            out.writeObject(new byte[0]); // empty MAC
+                                            out.writeObject(new byte[0]);
+                                            out.writeObject(new byte[0]);
                                         }
                                         out.flush();
 
-                                        // 4. Recebe do cliente o valor cifrado para a secção individual
                                         byte[] encryptedDataFromClient = (byte[]) in.readObject();
                                         byte[] sectionMac = (byte[]) in.readObject();
 
-                                        // Verify section file MAC
                                         if (!verifyMac(sectionMacKey, encryptedDataFromClient, sectionMac)) {
                                             System.err.println("INTEGRITY VIOLATION: section file tampered!");
                                             System.exit(-1);
@@ -537,14 +519,11 @@ class ServerThread extends Thread {
                                         try (FileOutputStream fos = new FileOutputStream(devFile, true)) {
                                             fos.write(encryptedDataFromClient);
                                         }
-                                        // Save section MAC
                                         Files.write(new File(devFile.getPath() + ".hash").toPath(), sectionMac);
 
-                                        // 5. Recebe do cliente o devicesLog cifrado já atualizado
                                         byte[] updatedEncryptedLog = (byte[]) in.readObject();
                                         byte[] updatedLogMac = (byte[]) in.readObject();
 
-                                        // Verify devicesLog MAC
                                         if (!verifyMac(homeMacKey, updatedEncryptedLog, updatedLogMac)) {
                                             System.err.println("INTEGRITY VIOLATION: devicesLog tampered!");
                                             System.exit(-1);
@@ -552,7 +531,6 @@ class ServerThread extends Thread {
                                         try (FileOutputStream fos = new FileOutputStream(globalLog, false)) {
                                             fos.write(updatedEncryptedLog);
                                         }
-                                        // Save devicesLog MAC
                                         Files.write(globalLogMac.toPath(), updatedLogMac);
 
                                         out.writeObject("OK");
@@ -594,7 +572,7 @@ class ServerThread extends Thread {
                                         out.writeObject(logMac);
 
                                         out.flush();
-                                    } catch (Exception e) {
+                                    } catch (IOException e) {
                                         System.err.println(e.getMessage());
                                         System.exit(-1);
                                     }
@@ -640,11 +618,9 @@ class ServerThread extends Thread {
                                     } else {
                                         out.writeObject("OK");
 
-                                        // 1. Enviar a chave (como Objeto)
                                         byte[] wrappedKey = Files.readAllBytes(keyFile.toPath());
                                         out.writeObject(wrappedKey);
 
-                                        // 2. Enviar o ficheiro histórico todo de uma vez (como Objeto)
                                         byte[] fileContent = Files.readAllBytes(logFile.toPath());
                                         out.writeObject(fileContent);
 
@@ -726,7 +702,7 @@ class ServerThread extends Thread {
             mac.init(key);
             mac.update(b);
             return mac.doFinal();
-        } catch (Exception e) {
+        } catch (IllegalStateException | InvalidKeyException | NoSuchAlgorithmException e) {
             System.err.println(e.getMessage());
             System.exit(-1);
         }
@@ -867,7 +843,7 @@ class ServerThread extends Thread {
             Files.move(tempFile.toPath(), fileToEncrypt.toPath(),
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 
-        } catch (Exception e) {
+        } catch (IOException | KeyException | NoSuchAlgorithmException | NoSuchPaddingException e) {
             System.err.println(e.getMessage());
             System.exit(-1);
         }
@@ -890,7 +866,7 @@ class ServerThread extends Thread {
                 fos.write(decryptedBytes);
             }
 
-        } catch (Exception e) {
+        } catch (IOException | KeyException | NoSuchAlgorithmException | BadPaddingException | IllegalBlockSizeException | NoSuchPaddingException e) {
             System.err.println(e.getMessage());
             System.exit(-1);
         }
@@ -969,10 +945,6 @@ class ServerThread extends Thread {
         }
     }
 
-    private boolean userExists(String user) {
-        return userExists(user, users);
-    }
-
     private boolean userExists(String user, File f) {
         try (Scanner sc = new Scanner(f)) {
             while (sc.hasNextLine()) {
@@ -988,10 +960,6 @@ class ServerThread extends Thread {
         return false;
     }
 
-    private boolean homeExists(String homeName) {
-        return homeExists(homeName, homes); // default: use homes (encrypted)
-    }
-
     private boolean homeExists(String homeName, File file) {
         try (Scanner sc = new Scanner(file)) {
             while (sc.hasNextLine()) {
@@ -1005,10 +973,6 @@ class ServerThread extends Thread {
             System.exit(-1);
         }
         return false;
-    }
-
-    private boolean checkOwner(String homeName, String user) {
-        return checkOwner(homeName, user, homes);
     }
 
     private boolean checkOwner(String homeName, String user, File file) {
@@ -1148,9 +1112,7 @@ class ServerThread extends Thread {
 
                                 if (user.equals(devices[0])) {
                                     String[] device_User = devices[1].split(",");
-                                    for (String line : device_User) {
-                                        latestByDevice.add(line);
-                                    }
+                                    latestByDevice.addAll(Arrays.asList(device_User));
                                 }
                             }
                         }
@@ -1165,7 +1127,7 @@ class ServerThread extends Thread {
                 System.err.println(e.getMessage());
                 System.exit(-1);
             }
-        } catch (Exception e) {
+        } catch (IOException e) {
             System.err.println(e.getMessage());
             System.exit(-1);
         }
@@ -1211,7 +1173,6 @@ class ServerThread extends Thread {
                     }
                 }
 
-                // Write updated content to ho_dec.txt, copy back and encrypt
                 Files.write(path, updated);
                 Files.copy(decFile.toPath(), homes.toPath(),
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -1225,7 +1186,7 @@ class ServerThread extends Thread {
                 return 0; // NOPERM
             }
 
-        } catch (Exception e) {
+        } catch (IOException e) {
             System.err.println(e.getMessage());
             System.exit(-1);
         }
@@ -1290,38 +1251,11 @@ class ServerThread extends Thread {
         return false;
     }
 
-    private void updateGlobalDeviceLog(String homeName, String deviceName, String lastValue) {
-        File globalLog = new File("homes/" + homeName + "/devicesLog.txt");
-        Map<String, String> states = new LinkedHashMap<>();
-        try {
-            if (globalLog.exists()) {
-                List<String> lines = Files.readAllLines(globalLog.toPath());
-                for (String line : lines) {
-                    String[] parts = line.split(":");
-                    if (parts.length >= 2) {
-                        states.put(parts[0], parts[1]);
-                    }
-                }
-            }
-            states.put(deviceName, lastValue);
-            try (FileWriter fw = new FileWriter(globalLog, false)) {
-                for (Map.Entry<String, String> entry : states.entrySet()) {
-                    fw.write(entry.getKey() + ":" + entry.getValue() + System.lineSeparator());
-                }
-            }
-        } catch (IOException e) {
-            System.err.println("Erro ao atualizar log global.");
-        }
-    }
-
-    // Returns the section key file encrypted with a specific user's public key
     private byte[] getSectionKeyEncryptedFor(String home, String section, String user) throws Exception {
-        // Load key file: key.<home>.<section>.<user>
         byte[] encryptedKey = Files.readAllBytes(Paths.get("homes/" + home + "/" + section, "key." + home + "." + section + "." + user));
         return encryptedKey;
     }
 
-    // Saves the re-encrypted section key for the new user
     private void saveSectionKey(String home, String section, String user, byte[] encryptedKey) throws Exception {
         Path keyPath = Paths.get("homes/" + home + "/" + section, "key." + home + "." + section + "." + user);
         Files.createDirectories(keyPath.getParent());

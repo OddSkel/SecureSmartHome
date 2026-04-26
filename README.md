@@ -8,9 +8,9 @@ Commands to execute .jar:
 
 - Create Client .jar with: `jar cfe SpertaClient.jar SpertaClient SpertaClient.class ServerThread.class`
 
-- Run Server with: `java -jar SpertaServer.jar <Port>`
+- Run Server with: `java -jar SpertaServer.jar <Port> <password-cifra> <keystore> <password-keystore>`
 
-- Run Client in another terminal with: `java -jar SpertaClient.jar <IP:Port> <username> <password>`
+- Run Client in another terminal with: `java -jar SpertaClient.jar <IP:Port> <truststore> <password-truststore> <keystore> <password-keystore> <user-id> <password>`
 
 ## Description of Project
 
