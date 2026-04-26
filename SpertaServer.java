@@ -30,6 +30,7 @@ import java.util.Map.Entry;
 import java.util.Scanner;
 import java.util.concurrent.Semaphore;
 import java.util.stream.Stream;
+
 import javax.crypto.Cipher;
 import javax.crypto.CipherOutputStream;
 import javax.crypto.Mac;
@@ -352,42 +353,52 @@ class ServerThread extends Thread {
                                 }
                             }
                             case "ADD" -> {
-                                String userToAdd = client_Commands[1];
-                                String homeName = client_Commands[2];
-                                String section = client_Commands[3];
-                                System.out.println("[" + user + " Thread] ADD command received to add user: " + userToAdd + " to home: " + homeName + " with section: " + section);
-                                if (userExists(userToAdd)) {
-                                    if (homeExists(homeName)) {
-                                        if (checkOwner(homeName, user)) {
-                                            if (checkOwner(homeName, userToAdd)) {
-                                                out.writeObject("USER_ADDING_SELF");
-                                                out.flush();
-                                                System.out.println("[" + user + " Thread] ADD command failed. User cannot add itself to home: " + homeName);
-                                            } else {
-                                                if (!isValidSection(section)) {
-                                                    out.writeObject("INVALID_SECTION");
-                                                    out.flush();
-                                                    System.out.println("[" + user + " Thread] ADD command failed. Invalid section: " + section);
-                                                } else {
-                                                    addUserToHome(userToAdd, homeName, section);
-                                                }
-                                            }
-                                        } else {
-                                            out.writeObject("NO_USER_PERMS");
-                                            out.flush();
-                                            System.out.println("[" + user + " Thread] ADD command failed. User does not have permissions to add users to home: " + homeName);
-                                        }
-                                    } else {
-                                        out.writeObject("HOME_NOT_FOUND");
-                                        out.flush();
-                                        System.out.println("[" + user + " Thread] ADD command failed. Home not found: " + homeName);
-                                    }
-                                } else {
-                                    out.writeObject("USER_NOT_FOUND");
-                                    out.flush();
-                                    System.out.println("[" + user + " Thread] ADD command failed. User not found: " + userToAdd);
-                                }
-                            }
+                              String userToAdd = client_Commands[1];
+                              String homeName  = client_Commands[2];
+                              String section   = client_Commands[3];
+
+                              if (!userExists(userToAdd)) {
+                                  out.writeObject("USER_NOT_FOUND"); out.flush(); break;
+                              }
+                              if (!homeExists(homeName)) {
+                                  out.writeObject("HOME_NOT_FOUND"); out.flush(); break;
+                              }
+                              if (!checkOwner(homeName, user)) {
+                                  out.writeObject("NO_USER_PERMS"); out.flush(); break;
+                              }
+                              if (checkOwner(homeName, userToAdd)) {
+                                  out.writeObject("USER_ADDING_SELF"); out.flush(); break;
+                              }
+                              if (!isValidSection(section)) {
+                                  out.writeObject("INVALID_SECTION"); out.flush(); break;
+                              }
+
+                              try{
+                                // Send the section key encrypted with the OWNER's public key
+                                byte[] encryptedKeyForOwner = getSectionKeyEncryptedFor(homeName, section, user);
+                                out.writeObject("SECTION_KEY");
+                                out.writeObject(encryptedKeyForOwner);
+                                out.flush();
+
+                                // Receive the re-encrypted key (encrypted for userToAdd)
+                                byte[] reEncryptedKey = (byte[]) in.readObject();
+
+                                // Save as key.<hm>.<s>.<user>
+                                saveSectionKey(homeName, section, userToAdd, reEncryptedKey);
+
+                                // Now add user to home
+                                addUserToHome(userToAdd, homeName, section);
+
+                                usersMac = generateMac(macKey, Files.readAllBytes(users.toPath()));
+                                homesMac = generateMac(macKey, Files.readAllBytes(homes.toPath()));
+                              }catch(Exception e){
+                                System.err.println("Error in ADD command: " + e.getMessage());
+                                System.exit(-1);
+                              }
+
+                              out.writeObject("USER_ADDED");
+                              out.flush();
+                          }
                             case "RD" -> {
                                 int result = verify(client_Commands, user);
                                 switch (result) {
@@ -1259,5 +1270,19 @@ class ServerThread extends Thread {
         } catch (IOException e) {
             System.err.println("Erro ao atualizar log global.");
         }
+    }
+
+    // Returns the section key file encrypted with a specific user's public key
+    private byte[] getSectionKeyEncryptedFor(String home, String section, String user) throws Exception {
+        // Load key file: key.<home>.<section>.<user>
+        byte[] encryptedKey = Files.readAllBytes(Paths.get("homes/" + home + "/" + section, "key." + home + "." + section + "." + user));
+        return encryptedKey;
+    }
+
+    // Saves the re-encrypted section key for the new user
+    private void saveSectionKey(String home, String section, String user, byte[] encryptedKey) throws Exception {
+        Path keyPath = Paths.get("homes/" + home + "/" + section, "key." + home + "." + section + "." + user);
+        Files.createDirectories(keyPath.getParent());
+        Files.write(keyPath, encryptedKey);
     }
 }

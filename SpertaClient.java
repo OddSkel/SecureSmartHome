@@ -1,4 +1,5 @@
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -16,11 +17,14 @@ import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Scanner;
+
 import javax.crypto.Cipher;
 import javax.crypto.CipherOutputStream;
 import javax.crypto.Mac;
@@ -167,22 +171,96 @@ public class SpertaClient {
                                 break;
                             }
 
-                            outStream.writeObject(command_Args);
-                            outStream.flush();
-                            String server_Response = (String) inStream.readObject();
-                            switch (server_Response) {
-                                case "USER_ADDED" ->
-                                    System.out.println("OK");
-                                case "USER_NOT_FOUND" ->
-                                    System.out.println("NOUSER");
-                                case "HOME_NOT_FOUND" ->
-                                    System.out.println("NOHM");
-                                case "NO_USER_PERMS" ->
-                                    System.out.println("NOPERM");
-                                default ->
-                                    System.out.println("NOK");
+                            String userToAdd = command_Args[1];
+                            String homeName  = command_Args[2];
+                            String section   = command_Args[3];
+
+                            // 1. Check if we have the user's certificate locally
+                            PublicKey userPublicKey = null;
+                            File certFile = new File("Certs/" + userToAdd + ".cer");
+
+                            if (certFile.exists()) {
+                              try{  
+                                // Load certificate from local storage
+                                CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                                FileInputStream certInput = new FileInputStream(certFile);
+                                Certificate cert = cf.generateCertificate(certInput);
+                                userPublicKey = cert.getPublicKey();
+                              }catch(Exception e){
+                                System.err.println("Error loading local certificate: " + e.getMessage());
+                                break;
+                              }
+                            } else {
+                                // 2. Request certificate from server
+                                outStream.writeObject(new String[]{"GET_CERT", userToAdd});
+                                outStream.flush();
+
+                                String certResponse = (String) inStream.readObject();
+                                if (certResponse.equals("NO_CERT")) {
+                                    System.out.println("NOCERT");
+                                    break;
+                                }
+
+                                try{
+                                  // Receive and save the certificate
+                                  byte[] certBytes = (byte[]) inStream.readObject();
+                                  CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                                  Certificate cert = cf.generateCertificate(new ByteArrayInputStream(certBytes));
+                                  userPublicKey = cert.getPublicKey();
+
+                                  // Save locally for future use
+                                  Files.createDirectories(Paths.get("Certs"));
+                                  Files.write(certFile.toPath(), certBytes);
+                                } catch (Exception e) {
+                                  System.err.println("Error handling certificate: " + e.getMessage());
+                                  break;
+                                }
                             }
 
+                            // 3. Send the ADD command to server
+                            outStream.writeObject(command_Args);
+                            outStream.flush();
+
+                            // 4. Request the Section Key encrypted with OUR public key
+                            //    Server responds with "SEND_SECTION_KEY" + the encrypted key
+                            String keyResponse = (String) inStream.readObject();
+                            if (!keyResponse.equals("SECTION_KEY")) {
+                                System.out.println("NOK");
+                                break;
+                            }
+
+                            try {
+                              byte[] encryptedSectionKey = (byte[]) inStream.readObject();
+
+                              KeyStore kstore = KeyStore.getInstance("JCEKS");
+                              kstore.load(new FileInputStream("Keys/" + keystore), pass_keystore.toCharArray());
+                              Key myPrivateKey = kstore.getKey("keyrsa", pass_keystore.toCharArray());
+
+                              // 5. Decrypt section key with OWN private key
+                              Cipher cipher = Cipher.getInstance("RSA");
+                              cipher.init(Cipher.DECRYPT_MODE, myPrivateKey); // your loaded private key
+                              byte[] sectionKeyBytes = cipher.doFinal(encryptedSectionKey);
+
+                              // 6. Re-encrypt with the userToAdd's public key
+                              cipher.init(Cipher.ENCRYPT_MODE, userPublicKey);
+                              byte[] reEncryptedKey = cipher.doFinal(sectionKeyBytes);
+                              
+                              // 7. Send re-encrypted key to server
+                              outStream.writeObject(reEncryptedKey);
+                              outStream.flush();
+                            } catch (Exception e) {
+                              System.err.println("Error during key handling: " + e.getMessage());
+                              break;
+                            }
+                            // 8. Read final result
+                            String server_Response = (String) inStream.readObject();
+                            switch (server_Response) {
+                                case "USER_ADDED"    -> System.out.println("OK");
+                                case "USER_NOT_FOUND"-> System.out.println("NOUSER");
+                                case "HOME_NOT_FOUND"-> System.out.println("NOHM");
+                                case "NO_USER_PERMS" -> System.out.println("NOPERM");
+                                default              -> System.out.println("NOK");
+                            }
                         }
                         case "RD" -> {
                             if (command_Args.length != 3) {
