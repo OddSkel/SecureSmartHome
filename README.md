@@ -56,7 +56,7 @@ If the operation was a success, then the server sends a `OK` response to the cli
 
 ## Limitations
 
-Right now, there are no limitations of the code.
+For now, the Certificates, Keystores and Truststores are being pre-stored meaning they are not being generated dynamically so there is no way for new users.
 
 ## Authors
 
